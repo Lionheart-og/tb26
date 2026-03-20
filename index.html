@@ -121,105 +121,44 @@
     .zrange { min-width: 80px; }
   }
 
+
   @media(max-width:500px){
-    #app { padding: 0.875rem 0.75rem; }
-    .header { gap: 0.5rem; margin-bottom: 1rem; }
-    .header h1 { font-size: 1.1rem; }
-    .athlete-name { display: none; }
-
-    /* ── Form banner ── */
-    .banner { flex-direction: column; align-items: flex-start; gap: 0.5rem; padding: 1rem; }
-    .banner-status { font-size: 1.2rem; }
-    .tsb-big { font-size: 1.3rem; align-self: flex-start; padding: 6px 12px; }
-
-    /* ── Metric cards: 2-col grid ── */
+    #app { padding: 1rem 0.75rem; }
+    .header { gap: 0.5rem; margin-bottom: 1.25rem; }
+    .header h1 { font-size: 1.15rem; }
+    .athlete-name { display: none; } /* show avatar only, save space */
+    .banner { flex-direction: column; align-items: flex-start; gap: 0.75rem; padding: 1rem 1rem; }
+    .banner-status { font-size: 1.25rem; }
+    .tsb-big { font-size: 1.4rem; align-self: flex-start; }
+    /* 5-col metrics → 2+3 wrap on phone */
     .metrics-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 8px; }
-    .metric-card { padding: 0.75rem 0.875rem; }
-    .metric-label { font-size: 10px; }
-    .metric-value { font-size: 1.2rem; }
-    .metric-sub { font-size: 10px; }
-
-    /* ── PMC Chart ── */
-    .chart-wrap { padding: 0.875rem; border-radius: 12px; }
-    .chart-legend { gap: 8px; flex-wrap: wrap; }
+    .metric-card { padding: 0.85rem 1rem; }
+    .metric-value { font-size: 1.25rem; }
+    .metric-sub { font-size: 11px; }
+    .chart-wrap { padding: 0.875rem 0.875rem; border-radius: 12px; }
+    .chart-legend { gap: 10px; }
     .leg { font-size: 10px; }
-
-    /* ── Goal block ── */
-    .chart-wrap .sec-title { font-size: 11px; }
-
-    /* ── Goal readiness 3-col → 1-col stack ── */
-    [style*="grid-template-columns:repeat(3,1fr)"] {
-      grid-template-columns: 1fr !important;
-    }
-    /* Readiness score header — stack vertically */
-    [style*="justify-content:space-between"][style*="flex-wrap:wrap"] {
-      flex-direction: column;
-      align-items: flex-start !important;
-    }
-
-    /* ── Training wizard ── */
-    /* Philosophy cards: 1-col on mobile */
-    #te-step-1 [style*="grid-template-columns:1fr 1fr"] {
-      grid-template-columns: 1fr !important;
-    }
-    /* Effort cards: stack vertically */
-    #te-step-1 [style*="display:flex"][style*="flex-wrap:wrap"] {
-      flex-direction: column;
-    }
-    /* Step 2 Q3 hills+gym: stack */
-    #te-step-2 [style*="grid-template-columns:1fr 1fr"] {
-      grid-template-columns: 1fr !important;
-    }
-    /* Step 3 schedule: 2-col */
-    #te-step-3 [style*="grid-template-columns:repeat(4,1fr)"] {
-      grid-template-columns: repeat(2, 1fr) !important;
-    }
-
-    /* ── Workout cards ── */
-    .act-row { padding: .7rem .875rem; gap: .75rem; }
-    .act-name { font-size: 13px; }
-    .act-meta { font-size: 10px; line-height: 1.6; }
-    .act-load { font-size: 12px; }
-
-    /* ── Sec titles ── */
-    .sec-title { font-size: 10px; }
-    .badge { font-size: 9px; }
-
-    /* ── Zone ref ── */
-    .zone-ref { padding: 0.875rem; }
+    .zone-ref { padding: 0.875rem 0.875rem; }
     .zone-row { font-size: 12px; gap: 8px; }
     .zname { min-width: 58px; font-size: 12px; }
     .zrange { min-width: 70px; font-size: 11px; }
     .zdesc { font-size: 11px; }
-
-    /* ── Suggestion ── */
-    .suggestion { padding: 1rem; }
+    .suggestion { padding: 1rem 1rem; }
     .sug-body { font-size: 13px; }
     .pills { gap: 6px; }
     .pill { font-size: 11px; padding: 4px 10px; }
-
-    /* ── Goal/Training edit buttons: full width row ── */
-    #goal-view [style*="display:flex;gap:6px"] {
-      width: 100%;
-      justify-content: flex-start;
-    }
-
-    /* ── Today block stats grid → 2 col ── */
-    [style*="grid-template-columns:repeat(auto-fill"] {
-      grid-template-columns: repeat(2, 1fr) !important;
-    }
-
-    /* ── Upcoming 7 days cards: tighten padding ── */
-    #week-plan-rows > div { padding: 0.75rem 0.875rem !important; }
-
-    /* ── Period timeline: smaller text ── */
-    [style*="font-size:10px;font-weight:500"] { font-size: 9px !important; }
+    .act-row { padding: .7rem .875rem; gap: .75rem; }
+    .act-name { font-size: 13px; }
+    .act-meta { font-size: 10px; }
+    .act-load { font-size: 12px; }
+    .sec-title { font-size: 10px; }
+    .badge { font-size: 9px; }
   }
 
   /* ── TP Grid: always horizontally scrollable on mobile ── */
   #tp-visual-wrap { -webkit-overflow-scrolling: touch; }
 
-  /* ── Metric card tooltip — hide on mobile (tap not hover) ── */
+  /* ── Metric card tooltip ── */
   .metric-card { position: relative; }
   .metric-card[data-tip]:hover { border-color: var(--border2); }
   #metric-tooltip {
@@ -231,8 +170,16 @@
     line-height: 1.65; box-shadow: 0 16px 40px rgba(0,0,0,0.65);
     display: none; transition: opacity 0.1s;
   }
-  #metric-tooltip .tip-title { font-size: 13px; font-weight: 500; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
-  #metric-tooltip .tip-formula { font-family: var(--mono); font-size: 11px; background: rgba(255,255,255,0.05); border-radius: 6px; padding: 7px 10px; margin: 8px 0; color: var(--accent2); border-left: 2px solid rgba(96,200,240,0.5); }
+  #metric-tooltip .tip-title {
+    font-size: 13px; font-weight: 500; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  #metric-tooltip .tip-formula {
+    font-family: var(--mono); font-size: 11px;
+    background: rgba(255,255,255,0.05); border-radius: 6px;
+    padding: 7px 10px; margin: 8px 0; color: var(--accent2);
+    border-left: 2px solid rgba(96,200,240,0.5);
+  }
   #metric-tooltip .tip-body { color: var(--muted); font-size: 12px; line-height: 1.7; }
   #metric-tooltip .tip-zones { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
   #metric-tooltip .tip-zone { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10px; }
@@ -246,38 +193,51 @@
 
   /* ── Touch targets + iOS zoom prevention ── */
   @media(max-width:760px){
-    button { min-height: 44px; padding-left: 14px !important; padding-right: 14px !important; font-size: 14px !important; touch-action: manipulation; }
-    input[type=text], input[type=number] { font-size: 16px !important; min-height: 44px; touch-action: manipulation; }
+    button {
+      min-height: 44px;
+      padding-left: 14px !important;
+      padding-right: 14px !important;
+      font-size: 14px !important;
+      touch-action: manipulation;
+    }
+    input[type=text], input[type=number] {
+      font-size: 16px !important;
+      min-height: 44px;
+      touch-action: manipulation;
+    }
     #token-input { min-height: 44px; font-size: 14px !important; }
-    select { font-size: 16px !important; min-height: 44px; }
   }
 
-  /* ── Action buttons ── */
-  .btn-strava { font-family: var(--mono); font-size: 10px; padding: 4px 10px; border-radius: 100px; border: .5px solid rgba(200,240,96,0.35); background: rgba(200,240,96,0.07); color: var(--accent); cursor: pointer; white-space: nowrap; touch-action: manipulation; }
-  .btn-cal { font-family: var(--mono); font-size: 10px; padding: 4px 10px; border-radius: 100px; border: .5px solid rgba(96,200,240,0.35); background: rgba(96,200,240,0.07); color: var(--accent2); cursor: pointer; white-space: nowrap; touch-action: manipulation; }
+  /* ── Action buttons (Strava / Calendar) — week cards + today block ── */
+  .btn-strava {
+    font-family: var(--mono); font-size: 10px; padding: 4px 10px;
+    border-radius: 100px; border: .5px solid rgba(200,240,96,0.35);
+    background: rgba(200,240,96,0.07); color: var(--accent);
+    cursor: pointer; white-space: nowrap; touch-action: manipulation;
+  }
+  .btn-cal {
+    font-family: var(--mono); font-size: 10px; padding: 4px 10px;
+    border-radius: 100px; border: .5px solid rgba(96,200,240,0.35);
+    background: rgba(96,200,240,0.07); color: var(--accent2);
+    cursor: pointer; white-space: nowrap; touch-action: manipulation;
+  }
   @media(max-width:500px){
-    .btn-strava, .btn-cal { font-size: 11px !important; padding: 8px 12px !important; min-height: 38px; }
+    .btn-strava, .btn-cal {
+      font-size: 11px !important;
+      padding: 8px 12px !important;
+      min-height: 38px;
+    }
   }
-
-  /* ── iOS safe area ── */
   @supports(padding: env(safe-area-inset-bottom)){
-    body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
-    #app { padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
+    body {
+      padding-left: env(safe-area-inset-left);
+      padding-right: env(safe-area-inset-right);
+    }
+    #app {
+      padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+    }
   }
 
-  /* ── Mobile: ensure inline styles with fixed grid columns are overridden ── */
-  @media(max-width:500px){
-    #readiness-components { grid-template-columns: 1fr !important; gap: 8px !important; }
-    .metrics-grid[style] { grid-template-columns: repeat(2,1fr) !important; }
-    /* Readiness 3-col panel */
-    #goal-view [style*="repeat(3,1fr)"] { grid-template-columns: 1fr !important; gap: 8px !important; }
-    /* Periodization timeline — allow wrapping */
-    [style*="display:flex;gap:3px"] { flex-wrap: wrap !important; gap: 3px !important; }
-    /* Goal edit grid */
-    #goal-edit [style*="grid-template-columns:1fr 1fr"] { grid-template-columns: 1fr !important; }
-    /* Training edit philosophy cards */
-    #te-step-1 > div:nth-child(4) { grid-template-columns: 1fr !important; }
-  }
 </style>
 </head>
 <body>
@@ -3419,6 +3379,28 @@ Important note: for Baviaans specifically, some long rides remain essential rega
     }
   })();
 
+  // Register inline crosshair plugin (draws white vertical line on hover)
+  Chart.register({
+    id: 'crosshair',
+    afterDraw(chart) {
+      if (chart.tooltip?._active?.length) {
+        const ctx = chart.ctx;
+        const x = chart.tooltip._active[0].element.x;
+        const topY = chart.scales.y.top;
+        const bottomY = chart.scales.y.bottom;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(x, topY);
+        ctx.lineTo(x, bottomY);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  });
+
   const pmcChart = new Chart(document.getElementById('pmc').getContext('2d'), {
     type:'line',
     data:{
@@ -3454,6 +3436,7 @@ Important note: for Baviaans specifically, some long rides remain essential rega
         tooltip:{
           backgroundColor:'#16161e', titleColor:'#6b6b80',
           bodyColor:'#f0f0f8', borderColor:'rgba(255,255,255,.1)', borderWidth:1,
+          boxWidth: 10, boxHeight: 10,
           callbacks:{
             afterBody(items) {
               const idx = items[0]?.dataIndex ?? 0;
@@ -3462,14 +3445,25 @@ Important note: for Baviaans specifically, some long rides remain essential rega
               return ['Zone: ' + z.label + ' (' + (f>0?'+':'') + Math.round(f) + ')'];
             },
             labelColor(item) {
+              // Fitness — yellow-green
+              if (item.datasetIndex === 0) {
+                return { borderColor:'#c8f060', backgroundColor:'#c8f060' };
+              }
+              // Fatigue — pink-purple
+              if (item.datasetIndex === 1) {
+                return { borderColor:'rgba(240,160,240,0.85)', backgroundColor:'rgba(240,160,240,0.85)' };
+              }
+              // Form — zone colour (fully filled)
               if (item.datasetIndex === 2) {
                 const f = sl[item.dataIndex]?.form ?? 0;
-                return { borderColor:formZoneColour(f), backgroundColor:formZoneColour(f) };
+                const col = formZoneColour(f);
+                return { borderColor: col, backgroundColor: col };
               }
               return undefined;
             }
           }
-        }
+        },
+        // crosshair registered globally above
       },
       scales:{
         x:{
