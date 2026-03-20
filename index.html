@@ -623,7 +623,77 @@ function calcFinishTime(goal) {
   return fh.toString().padStart(2,'0') + ':' + fm.toString().padStart(2,'0');
 }
 
-// ── Periodization phases ──────────────────────────────────────────────────────
+// ── Goal Readiness Score ──────────────────────────────────────────────────────
+// Composite score (0–100) factoring in:
+//  1. W/kg gap — how close current W/kg is to target (40% weight)
+//  2. CTL fitness — how close to race-ready CTL of 85 (30% weight)
+//  3. MTB specificity — % of recent rides that are outdoor MTB vs indoor (30% weight)
+// Each component scored 0–100, weighted sum = overall readiness.
+// Also projects current W/kg trajectory to race day based on trend.
+
+function calcGoalReadiness(currentWkg, currentCtl, activities, goal, weightKg) {
+  const targetWkg    = parseFloat(calcTargetWkg(goal, weightKg));
+  const raceCtlTarget = 85; // CTL target for sub-11hr ultra-endurance event
+  const daysLeft     = daysToRace();
+
+  // ── Component 1: W/kg gap (40%) ──────────────────────────────────────────
+  const wkgRatio   = Math.min(currentWkg / targetWkg, 1.2); // cap at 120%
+  const wkgScore   = Math.min(100, Math.round(wkgRatio * 100));
+
+  // ── Component 2: CTL fitness (30%) ───────────────────────────────────────
+  const ctlRatio   = Math.min(currentCtl / raceCtlTarget, 1.2);
+  const ctlScore   = Math.min(100, Math.round(ctlRatio * 100));
+
+  // ── Component 3: MTB specificity (30%) ───────────────────────────────────
+  // Look at last 90 days: outdoor MTB/gravel rides vs all rides
+  const cutoff90   = Date.now() - 90 * 86400000;
+  const recentRides = activities.filter(a =>
+    ['Ride','MountainBikeRide','VirtualRide','GravelRide'].includes(a.type) &&
+    new Date(a.start_date).getTime() > cutoff90
+  );
+  const outdoorMTB = recentRides.filter(a =>
+    ['MountainBikeRide','GravelRide','Ride'].includes(a.type) &&
+    !a.trainer // not on a trainer
+  );
+  const specRatio  = recentRides.length > 0 ? outdoorMTB.length / recentRides.length : 0;
+  const specScore  = Math.round(specRatio * 100);
+
+  // ── Composite score ───────────────────────────────────────────────────────
+  const composite  = Math.round(wkgScore * 0.40 + ctlScore * 0.30 + specScore * 0.30);
+
+  // ── W/kg projection to race day ───────────────────────────────────────────
+  // Simple linear projection: if CTL grows at ~0.5/week, FTP grows proportionally
+  // Conservative: 1% FTP improvement per 4 weeks of consistent training
+  const weeksLeft      = daysLeft / 7;
+  const conservativeGain = currentWkg * 0.01 * (weeksLeft / 4); // 1% per 4 wks
+  const projectedWkg   = Math.min(currentWkg + conservativeGain, targetWkg * 1.1);
+
+  // ── Status label ─────────────────────────────────────────────────────────
+  let status, statusCol, advice;
+  if (composite >= 80) {
+    status = 'On Track'; statusCol = '#60d090';
+    advice = 'Strong position. Maintain consistency and trust the taper.';
+  } else if (composite >= 60) {
+    status = 'Building'; statusCol = '#c8f060';
+    advice = 'Good progress. Focus on long rides and specificity to close the gap.';
+  } else if (composite >= 40) {
+    status = 'Developing'; statusCol = '#f0a060';
+    advice = 'Time to increase volume and add outdoor MTB sessions to your training.';
+  } else {
+    status = 'Early Stage'; statusCol = '#f06060';
+    advice = 'Significant work ahead. Prioritise consistent training above all else.';
+  }
+
+  return {
+    score: composite, status, statusCol, advice,
+    wkgScore, ctlScore, specScore,
+    targetWkg, currentWkg, projectedWkg: +projectedWkg.toFixed(2),
+    wkgGap: +(targetWkg - currentWkg).toFixed(2),
+    projectedGap: +(targetWkg - projectedWkg).toFixed(2),
+    mtbPct: Math.round(specRatio * 100),
+    weeksLeft: Math.round(weeksLeft),
+  };
+}
 // Plan always anchors to race date — phases calculated backwards from race day.
 // This means changing the race date automatically reshuffles the entire plan.
 
@@ -2457,6 +2527,11 @@ function render(athlete, activities, metrics) {
   const recent = [...activities].sort((a,b)=>new Date(b.start_date)-new Date(a.start_date)).slice(0,10);
   const goal   = loadGoal();
 
+  // Goal readiness score — composite of W/kg gap, CTL fitness, MTB specificity
+  const readiness = calcGoalReadiness(
+    parseFloat(wkg) || 0, fitness, activities, goal, ATHLETE_WEIGHT_KG
+  );
+
   // Build periodization timeline groups — starts from this week's Monday
   const periodStart = PLAN_MONDAY;
   const phaseGroups = [];
@@ -2517,12 +2592,12 @@ function render(athlete, activities, metrics) {
         <div class="metric-sub">42-day avg load</div>
       </div>
 
-      <!-- Fatigue — #60c8f0 blue (matches ATL line) -->
-      <div class="metric-card" style="border-color:rgba(96,200,240,0.25);border-left:2px solid #60c8f0;">
-        <div class="metric-label" style="color:#60c8f0;">Fatigue
-          <span class="badge" style="background:rgba(96,200,240,.10);color:#60c8f0;border-color:rgba(96,200,240,.35)">ATL</span>
+      <!-- Fatigue — pink-purple (matches W/kg line colour) -->
+      <div class="metric-card" style="border-color:rgba(240,160,240,0.25);border-left:2px solid rgba(240,160,240,0.85);">
+        <div class="metric-label" style="color:rgba(240,160,240,0.9);">Fatigue
+          <span class="badge" style="background:rgba(240,160,240,.10);color:rgba(240,160,240,0.9);border-color:rgba(240,160,240,.35)">ATL</span>
         </div>
-        <div class="metric-value" style="color:${fatigue>fitness?'#f06060':'#60c8f0'}">${fatigue}</div>
+        <div class="metric-value" style="color:${fatigue>fitness?'#f06060':'rgba(240,160,240,0.9)'}">${fatigue}</div>
         <div class="metric-sub">7-day avg load</div>
       </div>
 
@@ -2544,18 +2619,18 @@ function render(athlete, activities, metrics) {
         <div class="metric-sub">${ftpMethodLabel[ftp.method]}</div>
       </div>
 
-      <!-- W/kg — #f0a0f0 pink/purple (matches dashed W/kg line) -->
-      <div class="metric-card" id="wkg-card" style="cursor:default;border-color:rgba(240,160,240,0.25);border-left:2px solid rgba(240,160,240,0.85);">
-        <div class="metric-label" style="color:rgba(240,160,240,0.9);">W/kg
-          <span class="badge" style="background:rgba(240,160,240,.10);color:rgba(240,160,240,0.9);border-color:rgba(240,160,240,.35);">eFTP</span>
+      <!-- W/kg — #a78bfa violet/lavender (unique, unused colour) -->
+      <div class="metric-card" id="wkg-card" style="cursor:default;border-color:rgba(167,139,250,0.25);border-left:2px solid #a78bfa;">
+        <div class="metric-label" style="color:#a78bfa;">W/kg
+          <span class="badge" style="background:rgba(167,139,250,.10);color:#a78bfa;border-color:rgba(167,139,250,.35);">eFTP</span>
         </div>
         <div id="wkg-display" style="display:flex;align-items:baseline;gap:6px;">
-          <span id="wkg-value" class="metric-value" style="color:rgba(240,160,240,0.9);">${wkg ? wkg : '—'}</span>
+          <span id="wkg-value" class="metric-value" style="color:#a78bfa;">${wkg ? wkg : '—'}</span>
         </div>
         <div style="display:flex;align-items:center;gap:5px;margin-top:4px;">
           <input id="weight-input" type="number" min="40" max="150" step="0.5"
             value="${ATHLETE_WEIGHT_KG}"
-            style="width:54px;background:rgba(255,255,255,0.06);border:.5px solid rgba(240,160,240,0.35);border-radius:6px;color:rgba(240,160,240,0.9);font-family:var(--mono);font-size:11px;padding:3px 6px;text-align:center;outline:none;"
+            style="width:54px;background:rgba(255,255,255,0.06);border:.5px solid rgba(167,139,250,0.35);border-radius:6px;color:#a78bfa;font-family:var(--mono);font-size:11px;padding:3px 6px;text-align:center;outline:none;"
             title="Enter your weight in kg" />
           <span style="font-family:var(--mono);font-size:10px;color:var(--muted);">kg</span>
         </div>
@@ -2569,12 +2644,12 @@ function render(athlete, activities, metrics) {
         <div class="sec-title" style="margin-bottom:0;">Performance management chart — 12 weeks</div>
         <div style="display:flex;gap:14px;flex-wrap:wrap;">
           <div class="leg"><div class="leg-dot" style="background:#c8f060"></div>Fitness (CTL)</div>
-          <div class="leg"><div class="leg-dot" style="background:#60c8f0"></div>Fatigue (ATL)</div>
+          <div class="leg"><div class="leg-dot" style="background:rgba(240,160,240,0.85)"></div>Fatigue (ATL)</div>
           <div style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--muted);">
             <div style="width:22px;height:3px;background:linear-gradient(90deg,#f0d060,#60c8f0,#9090a8,#60d090,#f06060);border-radius:2px;"></div>Form (TSB)
           </div>
-          <div style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:rgba(240,160,240,0.85);">
-            <div style="width:22px;height:2px;border-top:2px dashed rgba(240,160,240,0.75);"></div>W/kg
+          <div style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:#a78bfa;">
+            <div style="width:22px;height:2px;border-top:2px dashed #a78bfa;opacity:0.85;"></div>W/kg
           </div>
         </div>
       </div>
@@ -2617,19 +2692,117 @@ function render(athlete, activities, metrics) {
           </div>
         </div>
 
-        <!-- Goal strip -->
-        <div style="margin-top:1rem;padding-top:1rem;border-top:.5px solid rgba(240,208,96,0.2);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-            <span style="font-size:18px;">🎯</span>
-            <div>
-              <div id="gv-timegoal" style="font-size:13px;font-weight:500;color:#60d090;">Goal: Sub-${goal.timeGoal % 1 === 0 ? goal.timeGoal + '.0' : goal.timeGoal} hours · finish before ${calcFinishTime(goal)}</div>
-              <div id="gv-stats" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:3px;">${goal.distance}km ÷ ${goal.timeGoal}hr = ${(goal.distance/goal.timeGoal).toFixed(1)}km/h avg · ~${goal.elevation.toLocaleString()}m elevation · target W/kg ≥ <span id="gv-wkg-target" style="color:var(--accent);">${calcTargetWkg(goal, ATHLETE_WEIGHT_KG)}</span></div>
+        <!-- Goal strip + readiness score -->
+        <div style="margin-top:1rem;padding-top:1rem;border-top:.5px solid rgba(240,208,96,0.2);">
+
+          <!-- Top row: goal text + buttons -->
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <span style="font-size:18px;">🎯</span>
+              <div>
+                <div id="gv-timegoal" style="font-size:13px;font-weight:500;color:#60d090;">Goal: Sub-${goal.timeGoal % 1 === 0 ? goal.timeGoal + '.0' : goal.timeGoal} hours · finish before ${calcFinishTime(goal)}</div>
+                <div id="gv-stats" style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:3px;">${goal.distance}km ÷ ${goal.timeGoal}hr = ${(goal.distance/goal.timeGoal).toFixed(1)}km/h avg · ~${goal.elevation.toLocaleString()}m elevation · target W/kg ≥ <span id="gv-wkg-target" style="color:var(--accent);">${readiness.targetWkg}</span></div>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button onclick="document.getElementById('goal-view').style.display='none';document.getElementById('goal-edit').style.display='block';updateGoalPreview();"
+                style="background:rgba(240,208,96,0.1);border:.5px solid rgba(240,208,96,0.35);border-radius:8px;padding:6px 14px;color:#f0d060;font-size:12px;cursor:pointer;font-family:var(--mono);touch-action:manipulation;white-space:nowrap;">✎ Edit goal</button>
+              <button onclick="document.getElementById('goal-view').style.display='none';document.getElementById('training-edit').style.display='block';loadTrainingEditForm(parseInt(document.querySelector('.metrics-grid .metric-value')?.textContent)||0);"
+                style="background:rgba(96,200,240,0.08);border:.5px solid rgba(96,200,240,0.3);border-radius:8px;padding:6px 14px;color:var(--accent2);font-size:12px;cursor:pointer;font-family:var(--mono);touch-action:manipulation;white-space:nowrap;">⚙ Edit training</button>
             </div>
           </div>
-          <button onclick="document.getElementById('goal-view').style.display='none';document.getElementById('goal-edit').style.display='block';updateGoalPreview();"
-            style="background:rgba(240,208,96,0.1);border:.5px solid rgba(240,208,96,0.35);border-radius:8px;padding:6px 14px;color:#f0d060;font-size:12px;cursor:pointer;font-family:var(--mono);touch-action:manipulation;white-space:nowrap;">✎ Edit goal</button>
-          <button onclick="document.getElementById('goal-view').style.display='none';document.getElementById('training-edit').style.display='block';loadTrainingEditForm(parseInt(document.querySelector('.metrics-grid .metric-value')?.textContent)||0);"
-            style="background:rgba(96,200,240,0.08);border:.5px solid rgba(96,200,240,0.3);border-radius:8px;padding:6px 14px;color:var(--accent2);font-size:12px;cursor:pointer;font-family:var(--mono);touch-action:manipulation;white-space:nowrap;">⚙ Edit training</button>
+
+          <!-- Readiness score panel -->
+          <div style="background:rgba(255,255,255,0.03);border:.5px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px 16px;">
+
+            <!-- Header row -->
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+              <div>
+                <div style="font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;">Goal readiness</div>
+                <div style="display:flex;align-items:baseline;gap:8px;">
+                  <span style="font-size:1.8rem;font-weight:300;color:${readiness.statusCol};">${readiness.score}</span>
+                  <span style="font-size:12px;color:var(--muted);">/100</span>
+                  <span style="font-family:var(--mono);font-size:11px;font-weight:500;color:${readiness.statusCol};">${readiness.status}</span>
+                </div>
+              </div>
+
+              <!-- Score bar -->
+              <div style="flex:1;min-width:160px;max-width:260px;">
+                <div style="height:6px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;">
+                  <div style="height:100%;width:${readiness.score}%;background:linear-gradient(90deg,#f06060,#f0a060,#c8f060,#60d090);border-radius:100px;transition:width 0.8s ease;"></div>
+                </div>
+                <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:5px;line-height:1.5;">${readiness.advice}</div>
+              </div>
+            </div>
+
+            <!-- Three components -->
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;">
+
+              <!-- W/kg gap -->
+              <div style="background:rgba(255,255,255,0.03);border-radius:8px;padding:10px 12px;">
+                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">W/kg Power</div>
+                <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px;">
+                  <span style="font-size:1.1rem;font-weight:400;color:#a78bfa;">${readiness.currentWkg.toFixed(1)}</span>
+                  <span style="font-family:var(--mono);font-size:10px;color:var(--muted);">→</span>
+                  <span style="font-size:1.1rem;font-weight:400;color:${readiness.wkgGap <= 0 ? '#60d090' : '#c8f060'};">${readiness.targetWkg}</span>
+                  <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">target</span>
+                </div>
+                <div style="height:3px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;margin-bottom:5px;">
+                  <div style="height:100%;width:${readiness.wkgScore}%;background:#a78bfa;border-radius:100px;"></div>
+                </div>
+                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);">
+                  ${readiness.wkgGap > 0
+                    ? 'Gap: ' + readiness.wkgGap + ' W/kg · proj. ' + readiness.projectedWkg.toFixed(1) + ' by race'
+                    : '✓ W/kg target met'}
+                </div>
+              </div>
+
+              <!-- CTL fitness -->
+              <div style="background:rgba(255,255,255,0.03);border-radius:8px;padding:10px 12px;">
+                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">Fitness (CTL)</div>
+                <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px;">
+                  <span style="font-size:1.1rem;font-weight:400;color:#c8f060;">${fitness}</span>
+                  <span style="font-family:var(--mono);font-size:10px;color:var(--muted);">→</span>
+                  <span style="font-size:1.1rem;font-weight:400;color:${fitness >= 85 ? '#60d090' : '#c8f060'};">85</span>
+                  <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">target</span>
+                </div>
+                <div style="height:3px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;margin-bottom:5px;">
+                  <div style="height:100%;width:${readiness.ctlScore}%;background:#c8f060;border-radius:100px;"></div>
+                </div>
+                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);">
+                  ${fitness >= 85 ? '✓ Race-ready fitness' : 'Need +' + (85 - fitness) + ' CTL over ' + readiness.weeksLeft + ' weeks'}
+                </div>
+              </div>
+
+              <!-- MTB specificity -->
+              <div style="background:rgba(255,255,255,0.03);border-radius:8px;padding:10px 12px;">
+                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">MTB Specificity</div>
+                <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px;">
+                  <span style="font-size:1.1rem;font-weight:400;color:#f0a060;">${readiness.mtbPct}%</span>
+                  <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">outdoor MTB · 90 days</span>
+                </div>
+                <div style="height:3px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;margin-bottom:5px;">
+                  <div style="height:100%;width:${readiness.specScore}%;background:#f0a060;border-radius:100px;"></div>
+                </div>
+                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);">
+                  ${readiness.mtbPct >= 60 ? '✓ Good trail specificity' : 'Increase outdoor MTB — Baviaans-specific terrain matters'}
+                </div>
+              </div>
+
+            </div>
+
+            <!-- W/kg projection note -->
+            <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.6;padding-top:8px;border-top:.5px solid rgba(255,255,255,0.06);">
+              <span style="color:rgba(255,255,255,0.4);">Projection:</span>
+              Current <span style="color:#a78bfa;">${readiness.currentWkg.toFixed(1)} W/kg</span> ·
+              conservative estimate at race day <span style="color:${readiness.projectedGap <= 0 ? '#60d090' : '#f0a060'};">${readiness.projectedWkg} W/kg</span> ·
+              target <span style="color:var(--accent);">${readiness.targetWkg} W/kg</span>
+              ${readiness.projectedGap > 0
+                ? '· <span style="color:#f0a060;">gap of ' + readiness.projectedGap.toFixed(2) + ' W/kg remains — harder sessions + weight management needed</span>'
+                : '· <span style="color:#60d090;">✓ on track to meet power target</span>'}
+            </div>
+
+          </div>
         </div>
       </div>
 
@@ -3210,7 +3383,7 @@ Important note: for Baviaans specifically, some long rides remain essential rega
         {
           label:'Fatigue (ATL)',
           data: sl.map(h => h.atl),
-          borderColor:'#60c8f0', borderWidth:2, tension:.4, pointRadius:0, fill:false,
+          borderColor:'rgba(240,160,240,0.85)', borderWidth:2, tension:.4, pointRadius:0, fill:false,
           yAxisID:'y',
         },
         {
@@ -3224,7 +3397,7 @@ Important note: for Baviaans specifically, some long rides remain essential rega
         {
           label:'W/kg (eFTP)',
           data: wkgSeries(null),
-          borderColor:'rgba(240,160,240,0.85)', borderWidth:1.5,
+          borderColor:'#a78bfa', borderWidth:1.5,
           borderDash:[4,3], tension:.4, pointRadius:0, fill:false,
           yAxisID:'y2',
         },
@@ -3251,7 +3424,7 @@ Important note: for Baviaans specifically, some long rides remain essential rega
                 return { borderColor:formZoneColour(f), backgroundColor:formZoneColour(f) };
               }
               if (item.datasetIndex === 3) {
-                return { borderColor:'rgba(240,160,240,0.85)', backgroundColor:'rgba(240,160,240,0.85)' };
+                return { borderColor:'#a78bfa', backgroundColor:'#a78bfa' };
               }
               return undefined;
             }
