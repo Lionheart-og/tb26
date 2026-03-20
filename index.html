@@ -458,23 +458,23 @@ function computeMetrics(activities) {
 
 // ── Form zones ────────────────────────────────────────────────────────────────
 function zone(f) {
-  if (f > 20)  return {key:'transition',label:'Transition',cls:'c-transition',hex:'var(--z-transition)',
+  if (f > 20)  return {key:'transition',label:'Transition',cls:'c-transition',hex:'var(--z-transition)',rawBorder:'rgba(240,208,96,.35)',
     badge:'background:rgba(240,208,96,.12);color:var(--z-transition);border-color:rgba(240,208,96,.35)',
     banner:'background:linear-gradient(135deg,rgba(240,208,96,.10),rgba(240,208,96,.04));border:.5px solid rgba(240,208,96,.28)',
     desc:'Very rested — you may be losing fitness. Increase training load.'};
-  if (f > 10)  return {key:'fresh',label:'Fresh',cls:'c-fresh',hex:'var(--z-fresh)',
+  if (f > 10)  return {key:'fresh',label:'Fresh',cls:'c-fresh',hex:'var(--z-fresh)',rawBorder:'rgba(96,200,240,.35)',
     badge:'background:rgba(96,200,240,.12);color:var(--z-fresh);border-color:rgba(96,200,240,.35)',
     banner:'background:linear-gradient(135deg,rgba(96,200,240,.10),rgba(96,200,240,.04));border:.5px solid rgba(96,200,240,.28)',
     desc:'Well recovered — ideal for a key session or race effort.'};
-  if (f > -5)  return {key:'grey',label:'Grey zone',cls:'c-grey',hex:'var(--z-grey)',
+  if (f > -5)  return {key:'grey',label:'Grey zone',cls:'c-grey',hex:'var(--z-grey)',rawBorder:'rgba(144,144,168,.35)',
     badge:'background:rgba(144,144,168,.12);color:var(--z-grey);border-color:rgba(144,144,168,.35)',
     banner:'background:linear-gradient(135deg,rgba(144,144,168,.08),rgba(144,144,168,.03));border:.5px solid rgba(144,144,168,.22)',
     desc:'Neutral training balance. Moderate effort is appropriate.'};
-  if (f > -30) return {key:'optimal',label:'Optimal',cls:'c-optimal',hex:'var(--z-optimal)',
+  if (f > -30) return {key:'optimal',label:'Optimal',cls:'c-optimal',hex:'var(--z-optimal)',rawBorder:'rgba(96,208,144,.35)',
     badge:'background:rgba(96,208,144,.12);color:var(--z-optimal);border-color:rgba(96,208,144,.35)',
     banner:'background:linear-gradient(135deg,rgba(96,208,144,.10),rgba(96,208,144,.04));border:.5px solid rgba(96,208,144,.28)',
     desc:'Productive training block — this is where fitness is built.'};
-  return {key:'risk',label:'High risk',cls:'c-risk',hex:'var(--z-risk)',
+  return {key:'risk',label:'High risk',cls:'c-risk',hex:'var(--z-risk)',rawBorder:'rgba(240,96,96,.35)',
     badge:'background:rgba(240,96,96,.12);color:var(--z-risk);border-color:rgba(240,96,96,.35)',
     banner:'background:linear-gradient(135deg,rgba(240,96,96,.10),rgba(240,96,96,.04));border:.5px solid rgba(240,96,96,.28)',
     desc:'Overreaching risk — rest is essential to avoid injury.'};
@@ -2613,7 +2613,7 @@ function render(athlete, activities, metrics) {
       </div>
 
       <!-- Form — zone colour (matches TSB line) -->
-      <div class="metric-card" style="border-color:${z.hex}44;border-left:2px solid ${z.hex};">
+      <div class="metric-card" style="border-color:${z.rawBorder};border-left:2px solid ${z.hex};">
         <div class="metric-label" style="color:${z.hex};">Form
           <span class="badge" style="${z.badge}">${z.label}</span>
         </div>
@@ -2630,18 +2630,18 @@ function render(athlete, activities, metrics) {
         <div class="metric-sub">${ftpMethodLabel[ftp.method]}</div>
       </div>
 
-      <!-- W/kg — #fb923c violet/lavender (unique, unused colour) -->
-      <div class="metric-card" id="wkg-card" style="cursor:default;border-color:rgba(251,146,60,0.15);border-left:2px solid #fb923c;">
-        <div class="metric-label" style="color:#fb923c;">W/kg
-          <span class="badge" style="background:rgba(251,146,60,.10);color:#fb923c;border-color:rgba(251,146,60,.35);">eFTP</span>
+      <!-- W/kg — #E6B800 violet/lavender (unique, unused colour) -->
+      <div class="metric-card" id="wkg-card" style="cursor:default;border-color:rgba(230,184,0,0.12);border-left:2px solid #E6B800;">
+        <div class="metric-label" style="color:#E6B800;">W/kg
+          <span class="badge" style="background:rgba(230,184,0,.10);color:#E6B800;border-color:rgba(230,184,0,.35);">eFTP</span>
         </div>
         <div id="wkg-display" style="display:flex;align-items:baseline;gap:6px;">
-          <span id="wkg-value" class="metric-value" style="color:#fb923c;">${wkg ? wkg : '—'}</span>
+          <span id="wkg-value" class="metric-value" style="color:#E6B800;">${wkg ? wkg : '—'}</span>
         </div>
         <div style="display:flex;align-items:center;gap:5px;margin-top:4px;">
           <input id="weight-input" type="number" min="40" max="150" step="0.5"
             value="${ATHLETE_WEIGHT_KG}"
-            style="width:54px;background:rgba(255,255,255,0.06);border:.5px solid rgba(251,146,60,0.3);border-radius:6px;color:#fb923c;font-family:var(--mono);font-size:11px;padding:3px 6px;text-align:center;outline:none;"
+            style="width:54px;background:rgba(255,255,255,0.06);border:.5px solid rgba(230,184,0,0.25);border-radius:6px;color:#E6B800;font-family:var(--mono);font-size:11px;padding:3px 6px;text-align:center;outline:none;"
             title="Enter your weight in kg" />
           <span style="font-family:var(--mono);font-size:10px;color:var(--muted);">kg</span>
         </div>
@@ -2745,16 +2745,16 @@ function render(athlete, activities, metrics) {
 
               <!-- W/kg gap -->
               <div data-rtip="wkg" style="background:rgba(255,255,255,0.03);border-radius:8px;padding:10px 12px;cursor:help;">
-                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">W/kg Power <span style="color:#fb923c;">ⓘ</span></div>
+                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">W/kg Power <span style="color:#E6B800;">ⓘ</span></div>
                 <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px;">
-                  <span style="font-size:1.1rem;font-weight:400;color:#fb923c;">${readiness.sustainableWkg.toFixed(2)}</span>
+                  <span style="font-size:1.1rem;font-weight:400;color:#E6B800;">${readiness.sustainableWkg.toFixed(2)}</span>
                   <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">@ ${goal.timeGoal}hr</span>
                   <span style="font-family:var(--mono);font-size:10px;color:var(--muted);">→</span>
                   <span style="font-size:1.1rem;font-weight:400;color:${readiness.wkgGap <= 0 ? '#60d090' : '#c8f060'};">${readiness.targetWkg}</span>
                   <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">needed</span>
                 </div>
                 <div style="height:3px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;margin-bottom:5px;">
-                  <div style="height:100%;width:${readiness.wkgScore}%;background:#fb923c;border-radius:100px;"></div>
+                  <div style="height:100%;width:${readiness.wkgScore}%;background:#E6B800;border-radius:100px;"></div>
                 </div>
                 <div style="font-family:var(--mono);font-size:9px;color:var(--muted);">
                   ${readiness.wkgGap > 0
@@ -2800,7 +2800,7 @@ function render(athlete, activities, metrics) {
             <!-- Power decay summary -->
             <div style="font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.6;padding-top:8px;border-top:.5px solid rgba(255,255,255,0.06);">
               <span style="color:rgba(255,255,255,0.4);">Power decay curve:</span>
-              eFTP <span style="color:#fb923c;">${readiness.currentWkg.toFixed(2)} W/kg</span>
+              eFTP <span style="color:#E6B800;">${readiness.currentWkg.toFixed(2)} W/kg</span>
               × decay factor <span style="color:var(--muted);">${readiness.decayFactor}</span> (Monod-Scherrer, ${goal.timeGoal}hr)
               = <span style="color:${readiness.wkgGap <= 0 ? '#60d090' : '#f0a060'};">${readiness.sustainableWkg.toFixed(2)} W/kg</span> sustainable at race pace
               · required <span style="color:var(--accent);">${readiness.targetWkg} W/kg</span>
@@ -4377,7 +4377,7 @@ async function init() {
   const RTIPS = {
     wkg: {
       title: '⚡ W/kg Power — 40% of score',
-      col: '#fb923c',
+      col: '#E6B800',
       body: 'This is not a future prediction — it is a current capability check. Using your actual eFTP right now, the power-duration decay curve calculates exactly how many watts per kilogram you can sustain for the full race duration, then compares it to the physics-derived requirement for your time goal.',
       formula: 'Sustainable W/kg = eFTP_W/kg × (3600 ÷ race_seconds) ^ 0.07\n\nAt 11hr: decay factor = (3600 ÷ 39600)^0.07 ≈ 0.83\nMeaning: you can sustain ~83% of your 1-hour power for 11 hours',
       detail: 'The power-duration relationship is the foundational law of endurance sport (Monod & Scherrer, 1965; validated by Allen & Coggan). Your maximum sustainable power decreases predictably as duration increases. The exponent 0.07 is scientifically calibrated for trained cyclists across the 20-minute to 8-hour range. An 11-hour race sits at the extreme end — roughly 17% below your FTP. This is physiological reality, not a conservative estimate. The target W/kg is calculated from a cycling physics model: aero drag + climbing power (mass × gravity × gradient × velocity) + rolling resistance, divided by 0.65 (the ultra-endurance FTP fraction) and your body weight.',
