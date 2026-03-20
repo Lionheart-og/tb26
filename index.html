@@ -4021,8 +4021,8 @@ async function init() {
       return;
     }
 
-    // Normal load — use cached token
-    const token = getToken();
+    // Normal load — try cached token first, then auto-refresh via Worker
+    const token = await getToken();
     if (!token) {
       showTokenUI();
       return;
