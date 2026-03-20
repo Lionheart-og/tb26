@@ -2784,61 +2784,42 @@ Important note: for Baviaans specifically, some long rides remain essential rega
         <!-- ═══ STEP 3: Schedule ═══ -->
         <div id="te-step-3" style="display:none;">
           <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:4px;">Set your weekly schedule</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:14px;">Assign session types to days of the week. Hover any label for details on what happens that day.</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:20px;">Two questions — we'll handle the rest automatically based on your training philosophy.</div>
 
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;">
-            <div title="Full rest. No training. Adaptation happens during recovery, not effort.">
-              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">😴 Rest day</div>
-              <select id="te-restDay" style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px 6px;font-size:12px;color:var(--text);outline:none;">
-                ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=>`<option value="${d}">${d}</option>`).join('')}
-              </select>
-              <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:3px;">Full rest — no training</div>
-            </div>
-            <div title="Your hardest structured session. Torque in Base, threshold in Build, stochastic in Peak. Schedule when freshest.">
-              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">⚡ Intervals 1</div>
-              <select id="te-interval1Day" style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px 6px;font-size:12px;color:var(--text);outline:none;">
-                ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=>`<option value="${d}">${d}</option>`).join('')}
-              </select>
-              <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:3px;">Primary hard session</div>
-            </div>
-            <div title="Complementary intensity session. Less demanding than Intervals 1. Always 2+ days apart.">
-              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">⚡ Intervals 2</div>
-              <select id="te-interval2Day" style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px 6px;font-size:12px;color:var(--text);outline:none;">
-                ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=>`<option value="${d}">${d}</option>`).join('')}
-              </select>
-              <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:3px;">Secondary hard session</div>
-            </div>
-            <div title="Posterior chain, single-leg power, hip strength. The foundation that keeps you powerful at hour 9 of Baviaans.">
-              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">🏋️ Strength 1</div>
-              <select id="te-strength1Day" style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px 6px;font-size:12px;color:var(--text);outline:none;">
-                ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=>`<option value="${d}">${d}</option>`).join('')}
-              </select>
-              <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:3px;">Gym — posterior chain</div>
-            </div>
-            <div title="Stability, single-leg balance, core strength. Complements Strength 1 with different emphasis.">
-              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">🏋️ Strength 2</div>
-              <select id="te-strength2Day" style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px 6px;font-size:12px;color:var(--text);outline:none;">
-                ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=>`<option value="${d}">${d}</option>`).join('')}
-              </select>
-              <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:3px;">Gym — stability &amp; core</div>
-            </div>
-            <div title="The backbone of the plan. 3–4hr in Base, escalating to 6–7hr at Peak. Always on a day with no time pressure.">
-              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">🚴 Long ride</div>
-              <select id="te-longRideDay" style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px 6px;font-size:12px;color:var(--text);outline:none;">
-                ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=>`<option value="${d}">${d}</option>`).join('')}
-              </select>
-              <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:3px;">Primary endurance ride</div>
-            </div>
-            <div title="Fatigued-leg ride after the long ride. Deliberately on tired legs to simulate Baviaans conditions. Strictly Zone 1–2.">
-              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">🔄 Recovery ride</div>
-              <select id="te-recoveryRideDay" style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px 6px;font-size:12px;color:var(--text);outline:none;">
-                ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=>`<option value="${d}">${d}</option>`).join('')}
-              </select>
-              <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:3px;">Back-to-back / Z1 flush</div>
+          <!-- Q1: Rest day -->
+          <div style="margin-bottom:22px;">
+            <div style="font-size:12px;font-weight:500;color:var(--text);margin-bottom:4px;">😴 Which day is your rest day?</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Monday is recommended — your body recovers from the weekend long ride before the week's first hard session.</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;" id="te-restday-group">
+              ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d => `
+                <div class="te-restday-btn" data-day="${d}" onclick="teSelectRestDay(this)"
+                  style="padding:8px 14px;border-radius:8px;border:.5px solid var(--border);background:var(--bg2);font-family:var(--mono);font-size:12px;color:var(--muted);cursor:pointer;transition:all 0.15s;">
+                  ${d}${d==='Mon'?' ✓':''}
+                </div>`).join('')}
             </div>
           </div>
 
-          <!-- Summary card -->
+          <!-- Q2: Long ride days (multi-select) -->
+          <div style="margin-bottom:22px;">
+            <div style="font-size:12px;font-weight:500;color:var(--text);margin-bottom:4px;">🚴 Which days can you ride longer? <span style="font-weight:400;color:var(--muted);">(select all that apply)</span></div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Select days with no time pressure — 3hr+ rides. Usually weekends. The first selected day becomes your primary long ride, the second becomes your back-to-back recovery ride.</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;" id="te-longdays-group">
+              ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d => `
+                <div class="te-longday-btn" data-day="${d}" onclick="teToggleLongDay(this)"
+                  style="padding:8px 14px;border-radius:8px;border:.5px solid var(--border);background:var(--bg2);font-family:var(--mono);font-size:12px;color:var(--muted);cursor:pointer;transition:all 0.15s;">
+                  ${d}
+                </div>`).join('')}
+            </div>
+          </div>
+
+          <!-- Auto-generated schedule preview -->
+          <div id="te-schedule-preview" style="background:rgba(200,240,96,0.05);border:.5px solid rgba(200,240,96,0.2);border-radius:12px;padding:14px 16px;margin-bottom:16px;">
+            <div style="font-size:11px;font-family:var(--mono);color:var(--accent);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;">📅 Your auto-generated week</div>
+            <div id="te-schedule-grid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;"></div>
+            <div id="te-schedule-note" style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.6;font-family:var(--mono);"></div>
+          </div>
+
+          <!-- Summary -->
           <div id="te-summary" style="background:rgba(96,200,240,0.05);border:.5px solid rgba(96,200,240,0.2);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.9;"></div>
 
           <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
@@ -3266,6 +3247,133 @@ const PHIL_MAP = {
 // Effort → hours escalation multiplier (used as hoursPerWeekPeak multiplier internally)
 const EFFORT_MAP = { conservative:1.4, balanced:1.7, aggressive:2.1 };
 
+// ── Step 3: simplified schedule — rest day + long days → auto-populate ────────
+const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const DAY_IDX = { Mon:0, Tue:1, Wed:2, Thu:3, Fri:4, Sat:5, Sun:6 };
+
+// State for step 3
+TE_STATE.restDay  = 'Mon';
+TE_STATE.longDays = ['Sat','Sun']; // multi-select
+
+window.teSelectRestDay = function(el) {
+  document.querySelectorAll('.te-restday-btn').forEach(b => {
+    b.style.background = 'var(--bg2)';
+    b.style.borderColor = 'var(--border)';
+    b.style.color = 'var(--muted)';
+  });
+  el.style.background = 'rgba(200,240,96,0.12)';
+  el.style.borderColor = 'rgba(200,240,96,0.5)';
+  el.style.color = 'var(--accent)';
+  TE_STATE.restDay = el.dataset.day;
+  teAutoSchedule();
+};
+
+window.teToggleLongDay = function(el) {
+  const day = el.dataset.day;
+  const idx = TE_STATE.longDays.indexOf(day);
+  if (idx === -1) {
+    TE_STATE.longDays.push(day);
+    el.style.background = 'rgba(96,200,240,0.12)';
+    el.style.borderColor = 'rgba(96,200,240,0.5)';
+    el.style.color = 'var(--accent2)';
+  } else {
+    TE_STATE.longDays.splice(idx, 1);
+    el.style.background = 'var(--bg2)';
+    el.style.borderColor = 'var(--border)';
+    el.style.color = 'var(--muted)';
+  }
+  teAutoSchedule();
+};
+
+// Core logic: given restDay + longDays, derive all 7 session assignments
+function teComputeSchedule(restDay, longDays, includeStrength) {
+  const rest  = DAY_IDX[restDay];
+  const longs = longDays.map(d => DAY_IDX[d]).sort((a,b) => a-b);
+  const longRide    = longs[0] !== undefined ? DAYS[longs[0]] : 'Sat';
+  const recovRide   = longs[1] !== undefined ? DAYS[longs[1]] : DAYS[(longs[0]+1)%7] || 'Sun';
+
+  // Remaining weekdays (not rest, not long ride days)
+  const remaining = DAYS.filter(d => d !== restDay && !longDays.includes(d));
+
+  // Place intervals: first two available remaining days, at least 2 apart
+  let int1 = null, int2 = null, str1 = null, str2 = null;
+  const candidates = remaining.filter(d => DAY_IDX[d] !== rest);
+
+  // int1: first candidate after rest day
+  for (const d of candidates) {
+    if (!int1) { int1 = d; continue; }
+    // int2: at least 2 days after int1
+    if (Math.abs(DAY_IDX[d] - DAY_IDX[int1]) >= 2 && !int2) { int2 = d; break; }
+  }
+  // fallback if not enough spread
+  if (!int1) int1 = candidates[0] || 'Tue';
+  if (!int2) int2 = candidates.find(d => d !== int1) || 'Thu';
+
+  // Strength days: between interval days if possible
+  if (includeStrength) {
+    const strCandidates = remaining.filter(d => d !== int1 && d !== int2);
+    str1 = strCandidates[0] || int1;
+    str2 = strCandidates[1] || int2;
+  } else {
+    // reuse interval days for extra riding
+    str1 = int1; str2 = int2;
+  }
+
+  return { restDay, interval1Day: int1, interval2Day: int2,
+           strength1Day: str1, strength2Day: str2,
+           longRideDay: longRide, recoveryRideDay: recovRide };
+}
+
+// Session type labels + colours for preview grid
+const SESSION_META = {
+  restDay:        { label:'Rest',      emoji:'😴', col:'rgba(144,144,168,0.3)',  text:'#9090a8' },
+  interval1Day:   { label:'Intervals', emoji:'⚡', col:'rgba(240,160,96,0.25)', text:'#f0a060' },
+  interval2Day:   { label:'Intervals', emoji:'⚡', col:'rgba(240,160,96,0.18)', text:'#f0a060' },
+  strength1Day:   { label:'Gym',       emoji:'🏋️', col:'rgba(240,160,240,0.2)', text:'rgba(240,160,240,0.9)' },
+  strength2Day:   { label:'Gym',       emoji:'🏋️', col:'rgba(240,160,240,0.15)','text':'rgba(240,160,240,0.9)' },
+  longRideDay:    { label:'Long ride', emoji:'🚴', col:'rgba(96,200,240,0.25)', text:'#60c8f0' },
+  recoveryRideDay:{ label:'Recovery',  emoji:'🔄', col:'rgba(96,208,144,0.2)',  text:'#60d090' },
+};
+
+function teAutoSchedule() {
+  const gym = TE_STATE.gym !== null ? TE_STATE.gym === 'true' : true;
+  const sched = teComputeSchedule(TE_STATE.restDay, TE_STATE.longDays, gym);
+
+  // Store computed schedule back to TE_STATE for applyTrainingEdit
+  TE_STATE.computedSchedule = sched;
+
+  // Build visual preview grid
+  const grid = document.getElementById('te-schedule-grid');
+  const note = document.getElementById('te-schedule-note');
+  if (!grid) return;
+
+  // Map day → session role
+  const dayRole = {};
+  Object.entries(sched).forEach(([role, day]) => { dayRole[day] = role; });
+
+  grid.innerHTML = DAYS.map(d => {
+    const role = dayRole[d];
+    const meta = role ? SESSION_META[role] : null;
+    return `<div style="background:${meta ? meta.col : 'rgba(255,255,255,0.03)'};border-radius:6px;padding:6px 4px;text-align:center;">
+      <div style="font-size:13px;">${meta ? meta.emoji : '·'}</div>
+      <div style="font-family:var(--mono);font-size:9px;font-weight:500;color:${meta ? meta.text : 'var(--muted)'};margin-top:2px;">${d}</div>
+      <div style="font-family:var(--mono);font-size:8px;color:var(--muted);margin-top:1px;line-height:1.2;">${meta ? meta.label : ''}</div>
+    </div>`;
+  }).join('');
+
+  // Note about what was auto-placed
+  if (note) {
+    const longDesc = TE_STATE.longDays.length === 0
+      ? 'No long ride days selected — please select at least one.'
+      : TE_STATE.longDays.length === 1
+        ? `Long ride on ${sched.longRideDay}. Select a second day for a back-to-back recovery ride.`
+        : `Long ride ${sched.longRideDay} · Recovery ride ${sched.recoveryRideDay} (back-to-back on tired legs — key Baviaans prep).`;
+    note.textContent = longDesc + ` Intervals auto-placed on ${sched.interval1Day} & ${sched.interval2Day} with recovery days between.`;
+  }
+
+  teUpdateSummary();
+}
+
 window.teGoStep = function(n) {
   [1,2,3].forEach(i => {
     const s = document.getElementById('te-step-'+i);
@@ -3276,7 +3384,7 @@ window.teGoStep = function(n) {
       t.style.color = i===n ? 'var(--accent2)' : 'var(--muted)';
     }
   });
-  if (n===3) teUpdateSummary();
+  if (n===3) { teAutoSchedule(); teUpdateSummary(); }
 };
 
 window.teSelectPhil = function(el) {
@@ -3391,19 +3499,19 @@ function teUpdateSummary() {
   const el = document.getElementById('te-summary');
   if (!el) return;
   const tc = loadTrainingConfig();
-  const get = id => { const e=document.getElementById(id); return e?e.value:''; };
-  const philLabel = TE_STATE.phil ? (PHIL_MAP[TE_STATE.phil]?.label || TE_STATE.phil) : (PHIL_MAP[tc.coachingStyle+'-'+tc.intervalPhilosophy]?.label || tc.coachingStyle);
+  const philLabel = TE_STATE.phil ? (PHIL_MAP[TE_STATE.phil]?.label || TE_STATE.phil) : tc.coachingStyle;
   const hrs = parseFloat(document.getElementById('te-hoursbase')?.value) || tc.hoursPerWeekBase;
   const effortLabel = {conservative:'Sustainable 🛡️', balanced:'Balanced ⚖️', aggressive:'Aggressive 🔥'}[TE_STATE.effort] || 'Balanced';
+  const sched = TE_STATE.computedSchedule || teComputeSchedule(TE_STATE.restDay, TE_STATE.longDays, TE_STATE.gym !== 'false');
   el.innerHTML =
     '<span style="color:var(--text);">Philosophy:</span> ' + philLabel + ' &nbsp;·&nbsp; ' +
     '<span style="color:var(--text);">Effort:</span> ' + effortLabel + ' &nbsp;·&nbsp; ' +
-    '<span style="color:var(--text);">Hours:</span> ' + hrs + '/week starting &nbsp;·&nbsp; ' +
+    '<span style="color:var(--text);">Hours:</span> ' + hrs + '/week &nbsp;·&nbsp; ' +
     '<span style="color:var(--text);">Weekday cap:</span> ' + TE_STATE.weekCap + 'min<br>' +
-    '<span style="color:var(--text);">Terrain:</span> ' + (TE_STATE.terrain||tc.terrain||'mtb') + ' &nbsp;·&nbsp; ' +
-    '<span style="color:var(--text);">Hills:</span> ' + (TE_STATE.hills==='true'||TE_STATE.hills===null&&tc.hillsAvailable ? 'Yes ⛰️' : 'No — trainer') + ' &nbsp;·&nbsp; ' +
-    '<span style="color:var(--text);">Gym:</span> ' + (TE_STATE.gym==='true'||TE_STATE.gym===null&&tc.includeStrength ? 'Yes 🏋️' : 'No') + '<br>' +
-    '<span style="color:var(--text);">Schedule:</span> Rest ' + get('te-restDay') + ' · Intervals ' + get('te-interval1Day') + '/' + get('te-interval2Day') + ' · Long ride ' + get('te-longRideDay') + ' · Recovery ' + get('te-recoveryRideDay');
+    '<span style="color:var(--text);">Rest:</span> ' + sched.restDay + ' &nbsp;·&nbsp; ' +
+    '<span style="color:var(--text);">Long ride:</span> ' + sched.longRideDay + ' &nbsp;·&nbsp; ' +
+    '<span style="color:var(--text);">Recovery:</span> ' + sched.recoveryRideDay + ' &nbsp;·&nbsp; ' +
+    '<span style="color:var(--text);">Intervals:</span> ' + sched.interval1Day + ' &amp; ' + sched.interval2Day;
 }
 
 window.loadTrainingEditForm = function(currentCtl) {
@@ -3440,6 +3548,10 @@ window.loadTrainingEditForm = function(currentCtl) {
   }
 
   // Pre-select saved values
+  // Pre-select rest day
+  TE_STATE.restDay = tc.restDay || 'Mon';
+  TE_STATE.longDays = [tc.longRideDay || 'Sat', tc.recoveryRideDay || 'Sun'].filter((v,i,a) => a.indexOf(v)===i);
+
   setTimeout(function() {
     // Philosophy
     const savedPhil = Object.keys(PHIL_MAP).find(k => PHIL_MAP[k].coachingStyle===tc.coachingStyle && PHIL_MAP[k].intervalPhilosophy===tc.intervalPhilosophy);
@@ -3448,7 +3560,7 @@ window.loadTrainingEditForm = function(currentCtl) {
       if (c) teSelectPhil(c);
     }
     // Effort
-    const effortCard = document.querySelector('.te-effort-card[data-effort="'+( tc.effortLevel||'balanced')+'"]');
+    const effortCard = document.querySelector('.te-effort-card[data-effort="'+(tc.effortLevel||'balanced')+'"]');
     if (effortCard) teSelectEffort(effortCard);
     // Week cap
     const capMap = {60:'tight',90:'normal',120:'flexible'};
@@ -3464,6 +3576,16 @@ window.loadTrainingEditForm = function(currentCtl) {
     // Gym
     const gymCard = document.querySelector('.te-gym-card[data-gym="'+String(tc.includeStrength)+'"]');
     if (gymCard) teSelectGym(gymCard);
+
+    // Rest day button
+    const restBtn = document.querySelector('.te-restday-btn[data-day="'+TE_STATE.restDay+'"]');
+    if (restBtn) teSelectRestDay(restBtn);
+
+    // Long day buttons
+    TE_STATE.longDays.forEach(function(d) {
+      const btn = document.querySelector('.te-longday-btn[data-day="'+d+'"]');
+      if (btn) teToggleLongDay(btn);
+    });
   }, 80);
 
   set('te-hoursbase',      tc.hoursPerWeekBase);
@@ -3489,6 +3611,9 @@ window.applyTrainingEdit = function() {
   const baseHrs = getFlt('te-hoursbase') || 8;
   const effortMult = EFFORT_MAP[TE_STATE.effort] || 1.7;
 
+  const gym = TE_STATE.gym !== null ? TE_STATE.gym === 'true' : loadTrainingConfig().includeStrength;
+  const sched = TE_STATE.computedSchedule || teComputeSchedule(TE_STATE.restDay, TE_STATE.longDays, gym);
+
   const tc = {
     ...loadTrainingConfig(),
     coachingStyle:      philCfg.coachingStyle      || loadTrainingConfig().coachingStyle,
@@ -3496,17 +3621,17 @@ window.applyTrainingEdit = function() {
     effortLevel:        TE_STATE.effort,
     hoursPerWeekBase:   baseHrs,
     hoursPerWeekPeak:   Math.round(baseHrs * effortMult * 10) / 10,
-    weekdaySessionCap:  TE_STATE.weekCap || getInt('te-wdcap') || 90,
-    restDay:            get('te-restDay')           || 'Mon',
-    interval1Day:       get('te-interval1Day')      || 'Tue',
-    interval2Day:       get('te-interval2Day')      || 'Thu',
-    strength1Day:       get('te-strength1Day')      || 'Wed',
-    strength2Day:       get('te-strength2Day')      || 'Fri',
-    longRideDay:        get('te-longRideDay')        || 'Sat',
-    recoveryRideDay:    get('te-recoveryRideDay')    || 'Sun',
+    weekdaySessionCap:  TE_STATE.weekCap || 90,
+    restDay:            sched.restDay,
+    interval1Day:       sched.interval1Day,
+    interval2Day:       sched.interval2Day,
+    strength1Day:       sched.strength1Day,
+    strength2Day:       sched.strength2Day,
+    longRideDay:        sched.longRideDay,
+    recoveryRideDay:    sched.recoveryRideDay,
     terrain:            TE_STATE.terrain            || loadTrainingConfig().terrain,
     hillsAvailable:     TE_STATE.hills !== null ? TE_STATE.hills === 'true' : loadTrainingConfig().hillsAvailable,
-    includeStrength:    TE_STATE.gym   !== null ? TE_STATE.gym   === 'true' : loadTrainingConfig().includeStrength,
+    includeStrength:    gym,
   };
 
   saveTrainingConfig(tc);
