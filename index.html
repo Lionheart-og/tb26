@@ -2498,48 +2498,69 @@ function render(athlete, activities, metrics) {
     <!-- Form banner -->
     <div class="banner" style="${z.banner}">
       <div>
-        <div class="banner-label">Today's form · EWMA methodology</div>
+        <div class="banner-label">Today's form</div>
         <div class="banner-status ${z.cls}">${z.label}</div>
         <div class="banner-sub">${z.desc}</div>
       </div>
       <div class="tsb-big" style="color:${z.hex}">${sign}${form} <span style="font-size:13px;color:var(--muted)">TSB</span></div>
     </div>
 
-    <!-- 5 metric cards -->
+    <!-- 5 metric cards — colours match PMC chart lines exactly -->
     <div class="metrics-grid metrics-grid-5" style="grid-template-columns:repeat(5,1fr);">
-      <div class="metric-card">
-        <div class="metric-label">Fitness <span class="badge" style="background:rgba(200,240,96,.10);color:var(--accent);border-color:rgba(200,240,96,.3)">CTL</span></div>
-        <div class="metric-value" style="color:var(--accent)">${fitness}</div>
+
+      <!-- Fitness — #c8f060 yellow-green (matches CTL line) -->
+      <div class="metric-card" style="border-color:rgba(200,240,96,0.25);border-left:2px solid #c8f060;">
+        <div class="metric-label" style="color:#c8f060;">Fitness
+          <span class="badge" style="background:rgba(200,240,96,.10);color:#c8f060;border-color:rgba(200,240,96,.35)">CTL</span>
+        </div>
+        <div class="metric-value" style="color:#c8f060;">${fitness}</div>
         <div class="metric-sub">42-day avg load</div>
       </div>
-      <div class="metric-card">
-        <div class="metric-label">Fatigue <span class="badge" style="background:rgba(96,200,240,.10);color:var(--accent2);border-color:rgba(96,200,240,.3)">ATL</span></div>
-        <div class="metric-value" style="color:${fatigue>fitness?'var(--warn)':'var(--accent2)'}">${fatigue}</div>
+
+      <!-- Fatigue — #60c8f0 blue (matches ATL line) -->
+      <div class="metric-card" style="border-color:rgba(96,200,240,0.25);border-left:2px solid #60c8f0;">
+        <div class="metric-label" style="color:#60c8f0;">Fatigue
+          <span class="badge" style="background:rgba(96,200,240,.10);color:#60c8f0;border-color:rgba(96,200,240,.35)">ATL</span>
+        </div>
+        <div class="metric-value" style="color:${fatigue>fitness?'#f06060':'#60c8f0'}">${fatigue}</div>
         <div class="metric-sub">7-day avg load</div>
       </div>
-      <div class="metric-card">
-        <div class="metric-label">Form <span class="badge" style="${z.badge}">${z.label}</span></div>
-        <div class="metric-value ${z.cls}">${sign}${form}</div>
+
+      <!-- Form — zone colour (matches TSB line) -->
+      <div class="metric-card" style="border-color:${z.hex}44;border-left:2px solid ${z.hex};">
+        <div class="metric-label" style="color:${z.hex};">Form
+          <span class="badge" style="${z.badge}">${z.label}</span>
+        </div>
+        <div class="metric-value" style="color:${z.hex};">${sign}${form}</div>
         <div class="metric-sub">Fitness − Fatigue</div>
       </div>
-      <div class="metric-card">
-        <div class="metric-label">eFTP <span class="badge" style="background:rgba(240,160,96,.10);color:var(--warn);border-color:rgba(240,160,96,.3)">power</span></div>
-        <div class="metric-value" style="color:var(--warn)">${ftp.watts ? ftp.watts+'W' : '—'}</div>
+
+      <!-- eFTP — #f0a060 orange (matches warn colour) -->
+      <div class="metric-card" style="border-color:rgba(240,160,96,0.25);border-left:2px solid #f0a060;">
+        <div class="metric-label" style="color:#f0a060;">eFTP
+          <span class="badge" style="background:rgba(240,160,96,.10);color:#f0a060;border-color:rgba(240,160,96,.35)">power</span>
+        </div>
+        <div class="metric-value" style="color:#f0a060;">${ftp.watts ? ftp.watts+'W' : '—'}</div>
         <div class="metric-sub">${ftpMethodLabel[ftp.method]}</div>
       </div>
-      <div class="metric-card" id="wkg-card" style="cursor:default;">
-        <div class="metric-label">W/kg <span class="badge" style="background:rgba(200,240,96,.10);color:var(--accent);border-color:rgba(200,240,96,.3)">eFTP</span></div>
+
+      <!-- W/kg — #f0a0f0 pink/purple (matches dashed W/kg line) -->
+      <div class="metric-card" id="wkg-card" style="cursor:default;border-color:rgba(240,160,240,0.25);border-left:2px solid rgba(240,160,240,0.85);">
+        <div class="metric-label" style="color:rgba(240,160,240,0.9);">W/kg
+          <span class="badge" style="background:rgba(240,160,240,.10);color:rgba(240,160,240,0.9);border-color:rgba(240,160,240,.35);">eFTP</span>
+        </div>
         <div id="wkg-display" style="display:flex;align-items:baseline;gap:6px;">
-          <span id="wkg-value" class="metric-value" style="color:var(--accent);">${wkg ? wkg : '—'}</span>
+          <span id="wkg-value" class="metric-value" style="color:rgba(240,160,240,0.9);">${wkg ? wkg : '—'}</span>
         </div>
         <div style="display:flex;align-items:center;gap:5px;margin-top:4px;">
           <input id="weight-input" type="number" min="40" max="150" step="0.5"
             value="${ATHLETE_WEIGHT_KG}"
-            style="width:54px;background:rgba(255,255,255,0.06);border:.5px solid rgba(200,240,96,0.35);border-radius:6px;color:var(--accent);font-family:var(--mono);font-size:11px;padding:3px 6px;text-align:center;outline:none;"
+            style="width:54px;background:rgba(255,255,255,0.06);border:.5px solid rgba(240,160,240,0.35);border-radius:6px;color:rgba(240,160,240,0.9);font-family:var(--mono);font-size:11px;padding:3px 6px;text-align:center;outline:none;"
             title="Enter your weight in kg" />
           <span style="font-family:var(--mono);font-size:10px;color:var(--muted);">kg</span>
         </div>
       </div>
+
     </div>
 
     <!-- PMC Chart — Form line colour-coded by zone -->
