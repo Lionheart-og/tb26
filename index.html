@@ -655,24 +655,30 @@ function calcGoalReadiness(currentWkg, currentCtl, activities, goal, weightKg) {
   const ctlScore   = Math.min(100, Math.round(ctlRatio * 100));
 
   // ── Component 3: Race-type specificity (30%) ─────────────────────────────
-  // Match Strava activity types to the goal race type
-  const cutoff90   = Date.now() - 90 * 86400000;
-  const allRides   = activities.filter(a =>
-    ['Ride','MountainBikeRide','VirtualRide','GravelRide'].includes(a.type) &&
+  // Strava activity types relevant to each race type:
+  //   MountainBikeRide = explicitly tagged MTB by Strava
+  //   GravelRide       = gravel
+  //   Ride             = generic outdoor road/gravel ride
+  //   VirtualRide      = indoor trainer (Zwift etc) — excluded from both counts
+  //
+  // Denominator = all OUTDOOR rides (excludes VirtualRide and trainer:true)
+  // Numerator   = outdoor rides matching the goal race type
+  const cutoff90     = Date.now() - 90 * 86400000;
+  const outdoorRides = activities.filter(a =>
+    ['Ride','MountainBikeRide','GravelRide'].includes(a.type) &&
+    a.trainer !== true && a.trainer !== 1 &&   // exclude trainer rides
     new Date(a.start_date).getTime() > cutoff90
   );
-  // Specific outdoor activity types that count for each race type
+  // Specific types per race category
   const specificTypes = {
     mtb:    ['MountainBikeRide'],
     gravel: ['GravelRide', 'MountainBikeRide'],
-    road:   ['Ride'],
+    road:   ['Ride', 'GravelRide'],              // road events often on generic Ride type
   };
-  const relevantTypes = specificTypes[raceType] || specificTypes.mtb;
-  const specificRides = allRides.filter(a =>
-    relevantTypes.includes(a.type) && !a.trainer
-  );
-  const specRatio  = allRides.length > 0 ? specificRides.length / allRides.length : 0;
-  const specScore  = Math.round(specRatio * 100);
+  const relevantTypes  = specificTypes[raceType] || specificTypes.mtb;
+  const specificRides  = outdoorRides.filter(a => relevantTypes.includes(a.type));
+  const specRatio      = outdoorRides.length > 0 ? specificRides.length / outdoorRides.length : 0;
+  const specScore      = Math.round(specRatio * 100);
 
   // ── Composite score (verified: 40% + 30% + 30% = 100%) ───────────────────
   const composite  = Math.round(wkgScore * 0.40 + ctlScore * 0.30 + specScore * 0.30);
@@ -737,6 +743,8 @@ function calcGoalReadiness(currentWkg, currentCtl, activities, goal, weightKg) {
     wkgGap: +(targetWkg - sustainableWkg).toFixed(2),
     mtbPct: Math.round(specRatio * 100),
     specLabel,
+    outdoorTotal: outdoorRides.length,
+    specificTotal: specificRides.length,
     weeksLeft,
   };
 }
@@ -2820,7 +2828,7 @@ function render(athlete, activities, metrics) {
                 <div style="font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">${readiness.specLabel} Specificity <span style="color:#f0a060;">ⓘ</span></div>
                 <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px;">
                   <span style="font-size:1.1rem;font-weight:400;color:#f0a060;">${readiness.mtbPct}%</span>
-                  <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">outdoor ${readiness.specLabel} · 90 days</span>
+                  <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">${readiness.specificTotal}/${readiness.outdoorTotal} outdoor ${readiness.specLabel} · 90 days</span>
                 </div>
                 <div style="height:3px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;margin-bottom:5px;">
                   <div style="height:100%;width:${readiness.specScore}%;background:#f0a060;border-radius:100px;"></div>
@@ -2880,7 +2888,7 @@ function render(athlete, activities, metrics) {
           <div>
             <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Race type</div>
             <select id="ge-type" style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px 10px;font-size:14px;color:var(--text);outline:none;">
-              <option value="mtb" ${goal.raceType==='mtb'||!goal.raceType?'selected':''}>🚵 MTB / Trail</option>
+              <option value="mtb" ${goal.raceType==='mtb'||!goal.raceType?'selected':''}>🚵 MTB</option>
               <option value="gravel" ${goal.raceType==='gravel'?'selected':''}>🌾 Gravel</option>
               <option value="road" ${goal.raceType==='road'?'selected':''}>🛣️ Road</option>
             </select>
