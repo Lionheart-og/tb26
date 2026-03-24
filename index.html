@@ -486,11 +486,12 @@ const GOAL_SK = 'race_goal_v1';
 const GOAL_DEFAULTS = {
   name:     'Trans Baviaans 2026',
   date:     '2026-08-08',
-  distance: 230,      // km
-  elevation:3000,     // m
-  timeGoal: 11.0,     // hours
-  startTime:'10:00',  // race start (for finish time calc)
+  distance: 230,
+  elevation:3000,
+  timeGoal: 11.0,
+  startTime:'10:00',
   location: 'Willowmore → Jeffreys Bay',
+  raceType: 'mtb',   // 'mtb' | 'road' | 'gravel'
 };
 
 function loadGoal() {
@@ -636,26 +637,16 @@ function calcGoalReadiness(currentWkg, currentCtl, activities, goal, weightKg) {
   const targetWkg    = parseFloat(calcTargetWkg(goal, weightKg));
   const raceCtlTarget = 85;
   const daysLeft     = daysToRace();
-  const ftpWatts     = currentWkg * weightKg; // reverse: W/kg × kg = watts
+  const ftpWatts     = currentWkg * weightKg;
+  const raceType     = (goal.raceType || 'mtb').toLowerCase();
 
   // ── Component 1: W/kg via Power Decay Curve (40%) ────────────────────────
-  // The power-duration relationship (Monod-Scherrer / Allen-Coggan) shows that
-  // sustainable power DECREASES as duration increases beyond ~1 hour.
-  // The decay exponent for trained cyclists is 0.07 (per doubling of duration).
-  // Formula: P(t) = FTP × (t_FTP / t_race) ^ 0.07
-  // where t_FTP = 3600s (1hr, the definition of FTP) and t_race = race duration in seconds
-  //
-  // This answers: "Given my current FTP, what average power can I actually sustain
-  // for 11 hours?" — then converts that to W/kg to compare against the physics target.
   const raceSecs     = goal.timeGoal * 3600;
-  const ftpSecs      = 3600; // FTP is defined at 60 minutes
-  const decayExp     = 0.07; // Monod-Scherrer exponent, well-validated 20min–8hr range
-  // Sustainable power fraction at race duration relative to FTP duration
-  const decayFactor  = Math.pow(ftpSecs / raceSecs, decayExp); // e.g. 11hr → ~0.83
-  const sustainableW = ftpWatts * decayFactor; // watts sustainable for full race duration
-  const sustainableWkg = sustainableW / weightKg; // W/kg at race duration
-
-  // Score: ratio of sustainable W/kg to required W/kg (capped at 100)
+  const ftpSecs      = 3600;
+  const decayExp     = 0.07;
+  const decayFactor  = Math.pow(ftpSecs / raceSecs, decayExp);
+  const sustainableW = ftpWatts * decayFactor;
+  const sustainableWkg = sustainableW / weightKg;
   const wkgRatio   = Math.min(sustainableWkg / targetWkg, 1.2);
   const wkgScore   = Math.min(100, Math.round(wkgRatio * 100));
 
@@ -663,36 +654,78 @@ function calcGoalReadiness(currentWkg, currentCtl, activities, goal, weightKg) {
   const ctlRatio   = Math.min(currentCtl / raceCtlTarget, 1.2);
   const ctlScore   = Math.min(100, Math.round(ctlRatio * 100));
 
-  // ── Component 3: MTB specificity (30%) ───────────────────────────────────
+  // ── Component 3: Race-type specificity (30%) ─────────────────────────────
+  // Match Strava activity types to the goal race type
   const cutoff90   = Date.now() - 90 * 86400000;
-  const recentRides = activities.filter(a =>
+  const allRides   = activities.filter(a =>
     ['Ride','MountainBikeRide','VirtualRide','GravelRide'].includes(a.type) &&
     new Date(a.start_date).getTime() > cutoff90
   );
-  const outdoorMTB = recentRides.filter(a =>
-    ['MountainBikeRide','GravelRide','Ride'].includes(a.type) && !a.trainer
+  // Specific outdoor activity types that count for each race type
+  const specificTypes = {
+    mtb:    ['MountainBikeRide'],
+    gravel: ['GravelRide', 'MountainBikeRide'],
+    road:   ['Ride'],
+  };
+  const relevantTypes = specificTypes[raceType] || specificTypes.mtb;
+  const specificRides = allRides.filter(a =>
+    relevantTypes.includes(a.type) && !a.trainer
   );
-  const specRatio  = recentRides.length > 0 ? outdoorMTB.length / recentRides.length : 0;
+  const specRatio  = allRides.length > 0 ? specificRides.length / allRides.length : 0;
   const specScore  = Math.round(specRatio * 100);
 
-  // ── Composite score ───────────────────────────────────────────────────────
+  // ── Composite score (verified: 40% + 30% + 30% = 100%) ───────────────────
   const composite  = Math.round(wkgScore * 0.40 + ctlScore * 0.30 + specScore * 0.30);
 
-  // ── Status label ─────────────────────────────────────────────────────────
+  // ── Phase-aware advice ────────────────────────────────────────────────────
+  const phase = currentPhase();
+  const phaseName = phase ? phase.name : 'Base';
+  const weeksLeft = Math.round(daysLeft / 7);
+  const raceLabel = raceType === 'road' ? 'road' : raceType === 'gravel' ? 'gravel' : 'MTB';
+
   let status, statusCol, advice;
   if (composite >= 80) {
     status = 'On Track'; statusCol = '#60d090';
-    advice = 'Strong position. Maintain consistency and trust the taper.';
+    const phaseAdvice = {
+      'Base 1':  'Solid aerobic base building. Keep the long rides truly Zone 1 and let the torque intervals do their work.',
+      'Base 2':  'Sub-threshold blocks are building your engine. Stay disciplined on intensity — don\'t push the easy days.',
+      'Build 1': 'Threshold phase — the hard work is paying off. Execute the intervals well and recover fully between.',
+      'Build 2': 'Stochastic work is sharpening race-specific fitness. Every quality session now counts double.',
+      'Peak':    'Peak phase — form is building. Stay sharp, back off the volume, trust what you\'ve built.',
+      'Taper':   'Taper underway. Resist the urge to do more — freshness is performance now.',
+      'Race Week':'Race week. Easy legs, sharp mind. You\'re ready.',
+    };
+    advice = phaseAdvice[phaseName] || 'Strong position. ' + weeksLeft + ' weeks to race — maintain consistency.';
   } else if (composite >= 60) {
     status = 'Building'; statusCol = '#c8f060';
-    advice = 'Good progress. Focus on long rides and specificity to close the gap.';
+    const phaseAdvice = {
+      'Base 1':  'Good start. Prioritise consistency over intensity — the base you build now compounds over 21 weeks.',
+      'Base 2':  'Aerobic engine developing. Add one extra long ' + raceLabel + ' ride this block if schedule allows.',
+      'Build 1': 'Threshold work beginning — this is where fitness accelerates. Execute every interval session.',
+      'Build 2': 'Good progress but ' + weeksLeft + ' weeks remain. Push the specificity — more outdoor ' + raceLabel + ' time.',
+      'Peak':    'Close to the mark. Nail the peak sessions and the taper will bring you to race fitness.',
+      'Taper':   'Good shape going into taper. Trust the process — fatigue will drop and fitness will show.',
+      'Race Week':'Final prep. Short sharp activation, eat well, sleep well.',
+    };
+    advice = phaseAdvice[phaseName] || 'Good progress. Focus on quality sessions and ' + raceLabel + ' specificity.';
   } else if (composite >= 40) {
     status = 'Developing'; statusCol = '#f0a060';
-    advice = 'Time to increase volume and add outdoor MTB sessions to your training.';
+    const phaseAdvice = {
+      'Base 1':  'Early days — the gap is closeable. Commit to the base work and avoid skipping long rides.',
+      'Base 2':  'Volume needs to increase. Every week of consistent riding now is worth three weeks closer to race day.',
+      'Build 1': 'Fitness needs a boost. Prioritise interval quality and add outdoor ' + raceLabel + ' sessions.',
+      'Build 2':  weeksLeft + ' weeks left — time to be strategic. More hours on the bike, specifically outdoors.',
+      'Peak':    'Peak phase with a gap to close. Maximum quality in remaining sessions.',
+      'Taper':   'Going into taper slightly underprepared — race smart, conserve energy early.',
+      'Race Week':'Focus on execution. Ride your own race, pace conservatively early.',
+    };
+    advice = phaseAdvice[phaseName] || 'More outdoor ' + raceLabel + ' time needed. Increase volume and specificity.';
   } else {
     status = 'Early Stage'; statusCol = '#f06060';
-    advice = 'Significant work ahead. Prioritise consistent training above all else.';
+    advice = 'Significant ground to cover in ' + weeksLeft + ' weeks. Consistent daily training is the only path — prioritise it above everything else.';
   }
+
+  const specLabel = raceType === 'road' ? 'Road' : raceType === 'gravel' ? 'Gravel' : 'MTB';
 
   return {
     score: composite, status, statusCol, advice,
@@ -703,7 +736,8 @@ function calcGoalReadiness(currentWkg, currentCtl, activities, goal, weightKg) {
     decayFactor: +decayFactor.toFixed(3),
     wkgGap: +(targetWkg - sustainableWkg).toFixed(2),
     mtbPct: Math.round(specRatio * 100),
-    weeksLeft: Math.round(daysLeft / 7),
+    specLabel,
+    weeksLeft,
   };
 }
 // Plan always anchors to race date — phases calculated backwards from race day.
@@ -2781,18 +2815,18 @@ function render(athlete, activities, metrics) {
                 </div>
               </div>
 
-              <!-- MTB specificity -->
+              <!-- Specificity -->
               <div data-rtip="spec" style="background:rgba(255,255,255,0.03);border-radius:8px;padding:10px 12px;cursor:help;">
-                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">MTB Specificity <span style="color:#f0a060;">ⓘ</span></div>
+                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">${readiness.specLabel} Specificity <span style="color:#f0a060;">ⓘ</span></div>
                 <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px;">
                   <span style="font-size:1.1rem;font-weight:400;color:#f0a060;">${readiness.mtbPct}%</span>
-                  <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">outdoor MTB · 90 days</span>
+                  <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">outdoor ${readiness.specLabel} · 90 days</span>
                 </div>
                 <div style="height:3px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;margin-bottom:5px;">
                   <div style="height:100%;width:${readiness.specScore}%;background:#f0a060;border-radius:100px;"></div>
                 </div>
                 <div style="font-family:var(--mono);font-size:9px;color:var(--muted);">
-                  ${readiness.mtbPct >= 60 ? '✓ Good trail specificity' : 'Increase outdoor MTB — Baviaans-specific terrain matters'}
+                  ${readiness.mtbPct >= 60 ? '✓ Good trail specificity' : 'Increase outdoor ' + readiness.specLabel + ' — race-specific terrain matters'}
                 </div>
               </div>
 
@@ -2842,6 +2876,14 @@ function render(athlete, activities, metrics) {
             <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Time goal (hours)</div>
             <input id="ge-time" type="number" value="${goal.timeGoal}" min="1" max="48" step="0.25"
               style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px 10px;font-size:14px;color:var(--text);outline:none;" oninput="updateGoalPreview()" />
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Race type</div>
+            <select id="ge-type" style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px 10px;font-size:14px;color:var(--text);outline:none;">
+              <option value="mtb" ${goal.raceType==='mtb'||!goal.raceType?'selected':''}>🚵 MTB / Trail</option>
+              <option value="gravel" ${goal.raceType==='gravel'?'selected':''}>🌾 Gravel</option>
+              <option value="road" ${goal.raceType==='road'?'selected':''}>🛣️ Road</option>
+            </select>
           </div>
           <div>
             <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Race start time</div>
@@ -3533,10 +3575,13 @@ window.applyGoalEdit = function() {
     timeGoal: parseFloat(document.getElementById('ge-time')?.value) || GOAL_DEFAULTS.timeGoal,
     startTime:document.getElementById('ge-start')?.value        || GOAL_DEFAULTS.startTime,
     location: document.getElementById('ge-loc')?.value.trim()   || GOAL_DEFAULTS.location,
+    raceType: document.getElementById('ge-type')?.value         || GOAL_DEFAULTS.raceType,
   };
   saveGoal(g);
 
-  // Update view mode display
+  const raceLabels = { mtb:'MTB', gravel:'Gravel', road:'Road' };
+  const raceLabel  = raceLabels[g.raceType] || 'MTB';
+
   const days  = Math.ceil((new Date(g.date+'T06:00:00') - new Date()) / 86400000);
   const weeks = Math.floor(days / 7);
   const finish = calcFinishTime(g);
@@ -3545,17 +3590,15 @@ window.applyGoalEdit = function() {
 
   const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
   set('gv-name', g.name);
-  set('gv-meta', new Date(g.date+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}) + ' · ' + g.distance + 'km MTB · ' + g.location);
+  set('gv-meta', new Date(g.date+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}) + ' · ' + g.distance + 'km ' + raceLabel + ' · ' + g.location);
   set('gv-days', days);
   set('gv-timegoal', 'Goal: Sub-' + g.timeGoal + ' hours · finish before ' + finish);
   set('gv-stats', g.distance + 'km ÷ ' + g.timeGoal + 'hr = ' + avgSpeed + 'km/h avg · ~' + g.elevation.toLocaleString() + 'm elevation · target W/kg ≥');
   set('gv-wkg-target', wkgTarget);
 
-  // Switch back to view
   document.getElementById('goal-view').style.display = 'block';
   document.getElementById('goal-edit').style.display = 'none';
 
-  // Flash confirmation
   const flash = document.createElement('div');
   flash.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#18181f;border:.5px solid rgba(200,240,96,0.5);border-radius:100px;padding:10px 20px;font-family:var(--mono);font-size:13px;color:var(--accent);z-index:9999;white-space:nowrap;';
   flash.textContent = '✓ Goal updated — ' + g.name + ' · sub-' + g.timeGoal + 'hr';
