@@ -655,28 +655,26 @@ function calcGoalReadiness(currentWkg, currentCtl, activities, goal, weightKg) {
   const ctlScore   = Math.min(100, Math.round(ctlRatio * 100));
 
   // ── Component 3: Race-type specificity (30%) ─────────────────────────────
-  // Strava activity types relevant to each race type:
-  //   MountainBikeRide = explicitly tagged MTB by Strava
-  //   GravelRide       = gravel
-  //   Ride             = generic outdoor road/gravel ride
-  //   VirtualRide      = indoor trainer (Zwift etc) — excluded from both counts
-  //
-  // Denominator = all OUTDOOR rides (excludes VirtualRide and trainer:true)
-  // Numerator   = outdoor rides matching the goal race type
+  // Strava returns TWO type fields:
+  //   a.type       — legacy field, always present
+  //   a.sport_type — newer field (API v3 2022+), more specific
+  // We check BOTH to ensure MTB rides tagged as sport_type:'MountainBikeRide'
+  // are caught even if type:'Ride' (which Strava sometimes returns for MTB).
   const cutoff90     = Date.now() - 90 * 86400000;
-  const outdoorRides = activities.filter(a =>
-    ['Ride','MountainBikeRide','GravelRide'].includes(a.type) &&
-    a.trainer !== true && a.trainer !== 1 &&   // exclude trainer rides
-    new Date(a.start_date).getTime() > cutoff90
-  );
-  // Specific types per race category
+  const actType = a => a.sport_type || a.type; // prefer sport_type if present
+  const outdoorRides = activities.filter(a => {
+    const t = actType(a);
+    return ['Ride','MountainBikeRide','GravelRide'].includes(t) &&
+      a.trainer !== true && a.trainer !== 1 &&
+      new Date(a.start_date).getTime() > cutoff90;
+  });
   const specificTypes = {
     mtb:    ['MountainBikeRide'],
     gravel: ['GravelRide', 'MountainBikeRide'],
-    road:   ['Ride', 'GravelRide'],              // road events often on generic Ride type
+    road:   ['Ride', 'GravelRide'],
   };
   const relevantTypes  = specificTypes[raceType] || specificTypes.mtb;
-  const specificRides  = outdoorRides.filter(a => relevantTypes.includes(a.type));
+  const specificRides  = outdoorRides.filter(a => relevantTypes.includes(actType(a)));
   const specRatio      = outdoorRides.length > 0 ? specificRides.length / outdoorRides.length : 0;
   const specScore      = Math.round(specRatio * 100);
 
@@ -4265,6 +4263,22 @@ async function loadAndRender(token) {
     : '—';
   document.getElementById('status-text').textContent =
     activities.length + ' activities · Strava power data · last activity ' + lastDate;
+
+  // ── Debug: log all activity type/sport_type combos to console ────────────
+  console.group('Strava activity type audit — last 90 days (' + activities.length + ' total)');
+  const cutoff90dbg = Date.now() - 90*86400000;
+  const typeMap = {};
+  activities.forEach(a => {
+    const key = 'type:' + a.type + ' | sport_type:' + (a.sport_type||'—') + ' | trainer:' + a.trainer;
+    typeMap[key] = (typeMap[key]||0) + 1;
+  });
+  Object.entries(typeMap).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>console.log(v+'x  '+k));
+  // Specifically find the ~19 March ride
+  const march = activities.filter(a => a.start_date && a.start_date.startsWith('2026-03'));
+  console.log('March 2026 activities:');
+  march.forEach(a => console.log(' ', a.start_date.slice(0,10), '|', a.name, '| type:', a.type, '| sport_type:', a.sport_type, '| trainer:', a.trainer));
+  console.groupEnd();
+
   render(athlete, activities, computeMetrics(activities));
 }
 
