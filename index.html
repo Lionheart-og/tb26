@@ -2604,13 +2604,13 @@ function render(athlete, activities, metrics) {
         <div class="metric-sub">42-day avg load</div>
       </div>
 
-      <!-- Fatigue — pink-purple (matches W/kg line colour) -->
+      <!-- Fatigue — pink-purple (matches ATL line) -->
       <div class="metric-card" style="border-color:rgba(240,160,240,0.25);border-left:2px solid rgba(240,160,240,0.85);">
         <div class="metric-label" style="color:rgba(240,160,240,0.9);">Fatigue
           <span class="badge" style="background:rgba(240,160,240,.10);color:rgba(240,160,240,0.9);border-color:rgba(240,160,240,.35)">ATL</span>
         </div>
-        <div class="metric-value" style="color:${fatigue>fitness?'#f06060':'rgba(240,160,240,0.9)'}">${fatigue}</div>
-        <div class="metric-sub">7-day avg load</div>
+        <div class="metric-value" style="color:rgba(240,160,240,0.9);">${fatigue}</div>
+        <div class="metric-sub">7-day avg load${fatigue>fitness ? ' <span style="color:#f06060;font-size:10px;">▲ above fitness</span>' : ''}</div>
       </div>
 
       <!-- Form — zone colour (matches TSB line) -->
@@ -4172,23 +4172,35 @@ async function loadAndRender(token) {
   document.getElementById('status-text').textContent = 'Loading activities...';
   const H     = { Authorization: 'Bearer ' + token };
   const after = Math.floor((Date.now() - 90*86400000) / 1000);
-  const [athRes, actRes] = await Promise.all([
+  const base  = 'https://www.strava.com/api/v3/athlete/activities?per_page=100&after=' + after;
+
+  const [athRes, actRes1] = await Promise.all([
     fetch('https://www.strava.com/api/v3/athlete', { headers: H }),
-    fetch('https://www.strava.com/api/v3/athlete/activities?per_page=100&after=' + after + '&page=1', { headers: H })
+    fetch(base + '&page=1', { headers: H })
   ]);
 
-  if (athRes.status === 401 || actRes.status === 401) {
+  if (athRes.status === 401 || actRes1.status === 401) {
     localStorage.removeItem(TOKEN_SK);
     localStorage.removeItem(EXPIRY_SK);
     showTokenUI('Your Strava token has expired. Tap below to re-connect — takes 10 seconds.');
     return;
   }
 
-  const athlete    = await athRes.json();
-  const activities = await actRes.json();
+  const athlete = await athRes.json();
+  const page1   = await actRes1.json();
 
-  if (!Array.isArray(activities)) {
-    throw new Error(activities?.message || JSON.stringify(activities));
+  if (!Array.isArray(page1)) {
+    throw new Error(page1?.message || JSON.stringify(page1));
+  }
+
+  // Fetch page 2 if page 1 was full (may have >100 rides in 90 days)
+  let activities = page1;
+  if (page1.length === 100) {
+    try {
+      const actRes2 = await fetch(base + '&page=2', { headers: H });
+      const page2   = await actRes2.json();
+      if (Array.isArray(page2) && page2.length > 0) activities = page1.concat(page2);
+    } catch(e) { /* non-critical — page 1 is sufficient for most athletes */ }
   }
   // Clean up OAuth code from URL without reloading
   if (location.search.includes('code=')) {
