@@ -2414,7 +2414,7 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
         function zoneColour(w) { return getPowerZoneColour(w, ftpW); }
 
         // Zone helpers — use _zoneConfig for consistency with rest of dashboard
-        const ZONE_CEIL  = window._zoneConfig.powerCeil;
+        const ZONE_CEIL  = (window._zoneConfig && window._zoneConfig.powerCeil) || { Z1:0.20, Z2:0.40, Z3:0.58, Z4:0.76, Z5:0.92, Z6:1.0 };
         const ZONE_BANDS = {}; // compute from _zoneConfig
         window._zoneConfig.power.forEach(function(z,i){
           const lo = i>0 ? window._zoneConfig.power[i-1].maxFrac : 0;
@@ -4662,7 +4662,8 @@ window._zoneConfig = {
     { label:'Z4', maxFrac: 1.02, col:'#f0a060' },
     { label:'Z5', maxFrac: 99,   col:'#f06060' },
   ],
-  // Ceiling heights for prescribed plan display (fraction of chart height)
+  // Ceiling heights for prescribed plan display — fixed visual constants, not zone boundaries
+  // These map zone labels to chart fill heights (fraction of drawH)
   powerCeil: { Z1:0.20, Z2:0.40, Z3:0.58, Z4:0.76, Z5:0.92, Z6:1.0 },
 };
 
@@ -4682,17 +4683,12 @@ function applyStravaZones(data) {
         const maxFrac = (z.max === -1 || z.max === null) ? 99 : z.max / ftp;
         return { label:lbl, maxFrac, col, stravaMin:z.min, stravaMax:z.max };
       });
-      // Update ZONE_POWER fractions used in buildSteppedProfile
+      // Update zone FTP fractions but keep powerCeil fixed — it's a visual constant
+      // that maps zone names to chart heights, not zone watt boundaries
       window._zoneConfig.power.forEach(function(z, i) {
-        const key = 'Z'+(i+1);
-        const prev = window._zoneConfig.power[i-1];
-        const lo = prev ? prev.maxFrac : 0;
-        const hi = z.maxFrac === 99 ? 1.40 : z.maxFrac;
-        // Ceiling = midpoint between this zone's upper and next zone's upper
-        const ceil = Math.min(1.0, 0.15 + i * 0.17);
-        window._zoneConfig.powerCeil[key] = ceil;
+        // powerCeil stays as-is — Z1=0.20, Z2=0.40 etc are visual display heights
       });
-      console.log('✓ Power zones loaded from Strava:', window._zoneConfig.power.map(z=>z.label+' <'+Math.round(z.maxFrac*ftp)+'W').join(', '));
+      console.log('✓ Power zones from Strava:', window._zoneConfig.power.map(z=>z.label+' <'+Math.round(z.maxFrac*ftp)+'W').join(', '));
     }
   }
 
