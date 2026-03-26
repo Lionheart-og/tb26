@@ -2380,7 +2380,7 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
     // Power profile
     const isRide = ['Ride','MountainBikeRide','VirtualRide','GravelRide'].includes(act.sport_type||act.type);
     const isGym  = ['WeightTraining','Workout'].includes(act.sport_type||act.type);
-    const PROF_H = 200; // tall enough to show zone differences clearly
+    const PROF_H = 210; // extra height for time axis
     const profileBg = document.createElement('div');
     profileBg.style.cssText = 'background:rgba(0,0,0,0.25);border-radius:8px;overflow:hidden;margin-bottom:14px;height:'+PROF_H+'px;position:relative;';
     if (isRide) {
@@ -2397,7 +2397,7 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
         cvs.height = PROF_H;
         const ctx = cvs.getContext('2d');
         const W = cvs.width, H = PROF_H;
-        const PAD_TOP = 8, PAD_BOT = 6;
+        const PAD_TOP = 8, PAD_BOT = 22; // 22px bottom for time labels
         const drawH = H - PAD_TOP - PAD_BOT;
         const avgW  = act.average_watts || Math.round(ftpW * 0.72);
         const avgHR = act.average_heartrate || 0;
@@ -2454,27 +2454,65 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
           segs.push({ x: i*segW, w: segW+0.5, power: Math.max(0, Math.round(power)) });
         }
 
-        // Draw power bars with intra-zone gradient
-        segs.forEach(function(seg) {
-          const fillH = Math.max(4, Math.round((Math.min(seg.power, drawMax) / drawMax) * drawH));
-          const y   = PAD_TOP + drawH - fillH;
-          const col = zoneColour(seg.power);
-          const ri  = parseInt(col.slice(1,3),16);
-          const gi  = parseInt(col.slice(3,5),16);
-          const bi  = parseInt(col.slice(5,7),16);
+        // Zone ceiling heights (fraction of drawH) — all bars in same zone = same height
+        const ZONE_CEIL = { Z1:0.20, Z2:0.40, Z3:0.58, Z4:0.76, Z5:0.92, Z6:1.0 };
+        function zoneOfW(w) {
+          const r = w / ftpW;
+          if (r < 0.56) return 'Z1';
+          if (r < 0.76) return 'Z2';
+          if (r < 0.90) return 'Z3';
+          if (r < 1.05) return 'Z4';
+          if (r < 1.20) return 'Z5';
+          return 'Z6';
+        }
+        // Within-zone brightness: how far through the zone band is this watt value?
+        const ZONE_BANDS = {
+          Z1:[0,    0.56], Z2:[0.56, 0.76], Z3:[0.76, 0.90],
+          Z4:[0.90, 1.05], Z5:[1.05, 1.20], Z6:[1.20, 1.60]
+        };
+        function zoneBrightness(w) {
+          const r = w / ftpW;
+          const z = zoneOfW(w);
+          const [lo, hi] = ZONE_BANDS[z];
+          return Math.max(0, Math.min(1, (r - lo) / (hi - lo)));
+        }
 
-          const grad = ctx.createLinearGradient(0, y, 0, y+fillH);
-          grad.addColorStop(0,   `rgba(${Math.min(255,ri+35)},${Math.min(255,gi+35)},${Math.min(255,bi+35)},0.90)`);
-          grad.addColorStop(0.5, `rgba(${ri},${gi},${bi},0.70)`);
-          grad.addColorStop(1,   `rgba(${Math.max(0,ri-20)},${Math.max(0,gi-20)},${Math.max(0,bi-20)},0.38)`);
+        // Draw power bars — all same zone = same height, brightness = actual watts
+        segs.forEach(function(seg, i) {
+          const z      = zoneOfW(seg.power);
+          const ceil   = ZONE_CEIL[z] || 0.20;
+          const fillH  = Math.max(3, Math.round(ceil * drawH));
+          const y      = PAD_TOP + drawH - fillH;
+          const col    = zoneColour(seg.power);
+          const bright = zoneBrightness(seg.power); // 0=low end of zone, 1=top end
+          const ri = parseInt(col.slice(1,3),16);
+          const gi = parseInt(col.slice(3,5),16);
+          const bi = parseInt(col.slice(5,7),16);
+
+          // Fill brightness: higher watts in zone = brighter/more opaque
+          const topA = 0.55 + bright * 0.35; // 0.55–0.90
+          const botA = 0.20 + bright * 0.20; // 0.20–0.40
+          const rH = Math.min(255, ri + Math.round(bright*30));
+          const gH = Math.min(255, gi + Math.round(bright*30));
+          const bH = Math.min(255, bi + Math.round(bright*30));
+
+          const grad = ctx.createLinearGradient(0, y, 0, y + fillH);
+          grad.addColorStop(0,   `rgba(${rH},${gH},${bH},${topA})`);
+          grad.addColorStop(0.6, `rgba(${ri},${gi},${bi},${(topA+botA)/2})`);
+          grad.addColorStop(1,   `rgba(${Math.max(0,ri-10)},${Math.max(0,gi-10)},${Math.max(0,bi-10)},${botA})`);
           ctx.fillStyle = grad;
           ctx.fillRect(Math.floor(seg.x), y, Math.ceil(seg.w), fillH);
-          // Bright 2px top cap
-          ctx.fillStyle = col;
+
+          // Bright top cap
+          ctx.fillStyle = `rgba(${rH},${gH},${bH},0.95)`;
           ctx.fillRect(Math.floor(seg.x), y, Math.ceil(seg.w), 2);
-          // 1px dark separator
-          ctx.fillStyle = 'rgba(0,0,0,0.55)';
-          ctx.fillRect(Math.floor(seg.x+seg.w-0.5), y, 1, fillH);
+
+          // Hard vertical edge ONLY at zone transitions (not between same-zone bars)
+          const nextSeg = segs[i+1];
+          if (nextSeg && zoneOfW(nextSeg.power) !== z) {
+            ctx.fillStyle = 'rgba(0,0,0,0.85)';
+            ctx.fillRect(Math.floor(seg.x + seg.w - 1), PAD_TOP, 2, drawH);
+          }
         });
 
         // Avg power reference line
@@ -2512,6 +2550,28 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
           ctx.strokeStyle='rgba(240,160,240,0.9)'; ctx.lineWidth=2; ctx.stroke();
           ctx.fillStyle='rgba(240,160,240,0.85)'; ctx.font='500 9px monospace'; ctx.textAlign='right';
           ctx.fillText(Math.round(avgHR)+' bpm avg HR', W-6, hrPts[Math.floor(hrPts.length/2)].y-5);
+        }
+
+        // ── Time axis ─────────────────────────────────────────────────────────
+        const durMins = Math.round((act.moving_time||0)/60);
+        const axisY   = PAD_TOP + drawH + 2;
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, axisY); ctx.lineTo(W, axisY); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.font = '500 8px monospace'; ctx.textAlign = 'center';
+        // Show ~5 time markers across the ride duration
+        const nTicks = 5;
+        for (let t = 0; t <= nTicks; t++) {
+          const px   = Math.round((t / nTicks) * W);
+          const mins = Math.round((t / nTicks) * durMins);
+          const lbl  = mins >= 60
+            ? Math.floor(mins/60)+'h'+(mins%60?String(mins%60).padStart(2,'0')+'m':'')
+            : mins+'m';
+          ctx.fillStyle = 'rgba(255,255,255,0.12)';
+          ctx.fillRect(px, axisY, 1, 4);
+          ctx.fillStyle = 'rgba(255,255,255,0.40)';
+          ctx.fillText(lbl, Math.max(10, Math.min(W-10, px)), axisY + 12);
         }
       }, 80); // 80ms gives the DOM time to lay out
     } else {
