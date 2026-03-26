@@ -2479,6 +2479,7 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
         }
 
         // Build HR points (used for both drawing and hover)
+        const durMins = Math.round((act.moving_time||0)/60);
         const hrRange = avgHR && maxHR ? maxHR - minHR : 1;
         const hrPts = segs.map(function(seg,i){
           const frac=i/nSegs;
@@ -2490,7 +2491,6 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
           const hrY=PAD_TOP+drawH-Math.round(((hr-minHR)/hrRange)*drawH*0.80);
           return {x:seg.x+seg.w/2, y:hrY, hr:Math.round(hr), power:seg.power, mins:Math.round((i/nSegs)*durMins)};
         });
-        const durMins=Math.round((act.moving_time||0)/60);
 
         // Draw power bars — zone ceiling height, brightness by actual watts
         segs.forEach(function(seg, i) {
