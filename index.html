@@ -2396,10 +2396,11 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
       setTimeout(function(){
         cvs.width  = cvs.offsetWidth || 800;
         cvs.height = PROF_H;
+        if (cvs.width < 10) return; // safety guard
         const ctx = cvs.getContext('2d');
         const W = cvs.width, H = PROF_H;
         const PAD_TOP = 8, PAD_BOT = 22;
-        const PAD_LEFT = 28, PAD_RIGHT = 36; // space for zone labels each side
+        const PAD_LEFT = 28, PAD_RIGHT = 36;
         const drawW = W - PAD_LEFT - PAD_RIGHT;
         const drawH = H - PAD_TOP - PAD_BOT;
         const avgW  = act.average_watts || Math.round(ftpW * 0.72);
@@ -2407,24 +2408,32 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
         const maxHR = act.max_heartrate || (avgHR ? avgHR * 1.15 : 0);
         const minHR = Math.max(50, avgHR * 0.72);
 
-        // Power zone definitions — from Strava athlete zones if available, else defaults
-        const ZONES = window._zoneConfig.power.map(function(z) {
-          return { max: z.maxFrac, col: z.col, label: z.label };
-        });
-        function zoneColour(w) { return getPowerZoneColour(w, ftpW); }
+        // Safe zone config — always use defaults if _zoneConfig not ready
+        const DEFAULT_POWER_ZONES = [
+          { max:0.56, col:'#6b7db5', label:'Z1' },
+          { max:0.76, col:'#4a9eff', label:'Z2' },
+          { max:0.90, col:'#60c8f0', label:'Z3' },
+          { max:1.05, col:'#f0a060', label:'Z4' },
+          { max:1.20, col:'#f06060', label:'Z5' },
+          { max:99,   col:'#f030a0', label:'Z6' },
+        ];
+        const ZONES = (window._zoneConfig && window._zoneConfig.power && window._zoneConfig.power.length >= 5)
+          ? window._zoneConfig.power.map(z => ({ max:z.maxFrac, col:z.col, label:z.label }))
+          : DEFAULT_POWER_ZONES;
+        function zoneColour(w) {
+          const r = w / ftpW;
+          return (ZONES.find(z => r < z.max) || ZONES[ZONES.length-1]).col;
+        }
 
-        // Zone helpers — use _zoneConfig for consistency with rest of dashboard
-        const ZONE_CEIL  = (window._zoneConfig && window._zoneConfig.powerCeil) || { Z1:0.20, Z2:0.40, Z3:0.58, Z4:0.76, Z5:0.92, Z6:1.0 };
-        const ZONE_BANDS = {}; // compute from _zoneConfig
-        window._zoneConfig.power.forEach(function(z,i){
-          const lo = i>0 ? window._zoneConfig.power[i-1].maxFrac : 0;
-          const hi = z.maxFrac===99 ? 1.60 : z.maxFrac;
-          ZONE_BANDS[z.label] = [lo, hi];
-        });
-        function zoneOfW(w) { return getPowerZone(w, ftpW).label; }
+        const ZONE_CEIL = { Z1:0.20, Z2:0.40, Z3:0.58, Z4:0.76, Z5:0.92, Z6:1.0 };
+        const ZONE_BANDS = { Z1:[0,0.56], Z2:[0.56,0.76], Z3:[0.76,0.90], Z4:[0.90,1.05], Z5:[1.05,1.20], Z6:[1.20,1.60] };
+        function zoneOfW(w) {
+          const r = w/ftpW;
+          if(r<0.56)return'Z1'; if(r<0.76)return'Z2'; if(r<0.90)return'Z3';
+          if(r<1.05)return'Z4'; if(r<1.20)return'Z5'; return'Z6';
+        }
         function zoneBrightness(w) {
-          const z=zoneOfW(w), bd=ZONE_BANDS[z]||[0,0.56];
-          const r=w/ftpW;
+          const z=zoneOfW(w), bd=ZONE_BANDS[z]||[0,0.56], r=w/ftpW;
           return Math.max(0,Math.min(1,(r-bd[0])/(bd[1]-bd[0])));
         }
         function zoneCeilY(z) {
