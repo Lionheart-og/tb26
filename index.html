@@ -1304,13 +1304,38 @@ function generateWeekPlan(referenceDate) {
 
 // ── Workout visual card builder ───────────────────────────────────────────────
 // Draws a mini interval visualisation bar chart inside the workout card
-// ── Zone → normalised power (0–1) ────────────────────────────────────────────
-const ZONE_POWER = { Z1:0.12, Z2:0.32, Z3:0.52, Z4:0.72, Z5:0.88, Z6:1.0, rest:0 };
+// Zone → ceiling height (0–1) — each zone fills to its UPPER boundary
+// This means all Z2 blocks are the same height; shade shows position within zone
+const ZONE_POWER = { Z1:0.20, Z2:0.40, Z3:0.58, Z4:0.76, Z5:0.92, Z6:1.0, rest:0.04 };
+
+// Zone colours — used for prescribed sessions
 const ZONE_COLOUR_FILL = {
   Z1:'rgba(107,107,128,0.85)', Z2:'rgba(74,158,255,0.9)',   Z3:'rgba(96,200,240,0.9)',
   Z4:'rgba(240,160,96,0.9)',   Z5:'rgba(240,96,96,0.95)',   Z6:'rgba(240,96,160,0.95)',
   rest:'rgba(30,30,40,0.4)'
 };
+
+// Parse any colour (hex #rrggbb or rgba(...)) → [r,g,b,a]
+function parseAnyColour(s) {
+  if (!s) return [128,128,128,0.85];
+  s = String(s).trim();
+  // Hex #rrggbb or #rgb
+  if (s.startsWith('#')) {
+    let hex = s.slice(1);
+    if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+    const r = parseInt(hex.slice(0,2),16), g = parseInt(hex.slice(2,4),16), b = parseInt(hex.slice(4,6),16);
+    return [isNaN(r)?128:r, isNaN(g)?128:g, isNaN(b)?128:b, 0.85];
+  }
+  // rgba(...) or rgb(...)
+  const m = s.match(/[\d.]+/g);
+  if (!m || m.length < 3) return [128,128,128,0.85];
+  return [
+    Math.max(0,Math.min(255,Math.round(parseFloat(m[0])))),
+    Math.max(0,Math.min(255,Math.round(parseFloat(m[1])))),
+    Math.max(0,Math.min(255,Math.round(parseFloat(m[2])))),
+    m[3]!==undefined ? Math.max(0,Math.min(1,parseFloat(m[3])||0.85)) : 0.85
+  ];
+}
 
 // Build a STEPPED (square-wave) power profile from zone blocks
 // Returns array of segments: [{x0,x1,power,zone,colour}, ...]
@@ -1403,51 +1428,31 @@ function drawPowerProfile(session, canvas, mode) {
   const PAD_BOT = mode === 'card' ? 4  : 2;
   const drawH   = H - PAD_TOP - PAD_BOT;
 
-  // Helper: parse colour string → [r,g,b,a] safely
-  function parseRgba(s) {
-    if (!s) return [128,128,128,0.85];
-    const m = String(s).match(/[\d.]+/g);
-    if (!m || m.length < 3) return [128,128,128,0.85];
-    const r = Math.round(parseFloat(m[0])||0);
-    const g = Math.round(parseFloat(m[1])||0);
-    const b = Math.round(parseFloat(m[2])||0);
-    const a = m[3] !== undefined ? parseFloat(m[3]) : 0.85;
-    return [
-      Math.max(0,Math.min(255,r)),
-      Math.max(0,Math.min(255,g)),
-      Math.max(0,Math.min(255,b)),
-      isNaN(a) ? 0.85 : Math.max(0,Math.min(1,a))
-    ];
-  }
-
   segs.forEach(seg => {
     const x0   = Math.floor(seg.x0);
     const x1   = Math.ceil(seg.x1);
     const segW = Math.max(1, x1 - x0);
+    // ALL blocks draw at the zone ceiling — same zone = same height
     const barH = Math.round(drawH * seg.power);
     const y    = PAD_TOP + (drawH - barH);
 
-    const [r,g,b,a] = parseRgba(seg.colour);
+    // Use parseAnyColour which handles both hex and rgba formats
+    const [r,g,b,a] = parseAnyColour(seg.colour);
 
-    // Intra-zone shading: vertical gradient within the block
-    // Top 30% of bar: slightly brighter (higher power within zone)
-    // Bottom 30%: slightly darker (lower power)
-    // This represents natural power variability within the zone band
     if (barH > 0) {
+      const hiA  = mode === 'cell' ? 0.80 : 0.70;
+      const loA  = mode === 'cell' ? 0.35 : 0.25;
       const grad = ctx.createLinearGradient(0, y, 0, y + barH);
-      const hiA  = Math.min(1, a * (mode === 'cell' ? 0.75 : 0.65));
-      const midA = Math.min(1, a * (mode === 'cell' ? 0.50 : 0.40));
-      const loA  = Math.min(1, a * (mode === 'cell' ? 0.30 : 0.22));
-      // Slightly lighter at top (brighter = higher power within zone)
-      grad.addColorStop(0,    `rgba(${Math.min(255,r+20)},${Math.min(255,g+20)},${Math.min(255,b+20)},${hiA})`);
-      grad.addColorStop(0.45, `rgba(${r},${g},${b},${midA})`);
-      grad.addColorStop(1,    `rgba(${Math.max(0,r-15)},${Math.max(0,g-15)},${Math.max(0,b-15)},${loA})`);
+      grad.addColorStop(0,   `rgba(${Math.min(255,r+15)},${Math.min(255,g+15)},${Math.min(255,b+15)},${hiA})`);
+      grad.addColorStop(0.5, `rgba(${r},${g},${b},${(hiA+loA)/2})`);
+      grad.addColorStop(1,   `rgba(${Math.max(0,r-10)},${Math.max(0,g-10)},${Math.max(0,b-10)},${loA})`);
       ctx.fillStyle = grad;
       ctx.fillRect(x0, y, segW, barH);
     }
 
-    // Top edge — full-opacity zone colour line (1–2px)
-    ctx.fillStyle = seg.colour;
+    // Top edge — full-opacity zone colour line
+    const topCol = `rgba(${r},${g},${b},${Math.min(1,a+0.1)})`;
+    ctx.fillStyle = topCol;
     ctx.fillRect(x0, y, segW, mode === 'card' ? 2 : 1);
 
     // Zone label on tall blocks in card mode
@@ -1460,7 +1465,7 @@ function drawPowerProfile(session, canvas, mode) {
     }
   });
 
-  // Hard 1px separator lines between zone changes (not between same-zone blocks)
+  // Hard 1px separator lines between zone changes only
   if (mode === 'card') {
     ctx.fillStyle = 'rgba(10,10,15,0.8)';
     segs.forEach((seg, i) => {
@@ -1470,9 +1475,6 @@ function drawPowerProfile(session, canvas, mode) {
     });
   }
 }
-
-
-// Build full workout card DOM element
 function buildWorkoutCard(session, isToday) {
   const intBg  = {easy:'rgba(96,208,144,0.10)',moderate:'rgba(96,200,240,0.10)',hard:'rgba(240,160,96,0.10)',race:'rgba(240,208,96,0.18)'};
   const intBdr = {easy:'rgba(96,208,144,0.30)',moderate:'rgba(96,200,240,0.30)',hard:'rgba(240,160,96,0.30)',race:'rgba(240,208,96,0.55)'};
