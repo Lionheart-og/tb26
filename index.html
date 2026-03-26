@@ -298,19 +298,54 @@ function emoji(t) {
     CrossFit:'🏋️',EBikeRide:'⚡',NordicSki:'⛷️',AlpineSki:'🎿'})[t] || '🏅';
 }
 
+// ── Training Load (TSS) ───────────────────────────────────────────────────────
+// Priority 1: Power-based TSS (when Strava has weighted_average_watts / power)
+//   TSS = (duration_s × NP × IF) / (FTP × 3600) × 100
+//   IF  = NP / FTP
+//   We use weighted_average_watts as NP proxy (Strava doesn't expose true NP)
+//
+// Priority 2: HR-based TSS (hrTSS) — Coggan formula
+//   hrTSS = duration_hrs × ((HR_avg - HR_rest) / (HR_threshold - HR_rest)) ^ 2 × 100
+//   HR_rest = 50, HR_threshold = 162 (typical trained athlete defaults)
+//
+// Priority 3: Duration-based estimate (when no power or HR)
+//   Simple: duration_hrs × 50 for moderate-effort rides
+//
+// This matches intervals.icu's approach and produces CTL/ATL values consistent
+// with what you see there.
+const HR_REST      = 50;
+const HR_THRESHOLD = 162; // lactate threshold HR — adjust if known
+
 function load(a) {
-  const hrs  = a.moving_time / 3600;
-  const hr   = a.average_heartrate || 0;
-  const elev = a.total_elevation_gain || 0;
-  const t    = a.type || '';
-  let base;
-  if (t==='Swim')               base = (a.distance/1000)*45;
-  else if (t.includes('Ride'))  base = hrs*60 + elev*0.08;
-  else if (t==='Run'||t==='VirtualRun') base = hrs*75 + elev*0.12;
-  else if (t==='Walk'||t==='Hike')      base = hrs*35 + elev*0.06;
-  else                          base = hrs*50;
-  const hrf = hr > 0 ? Math.min(Math.max(hr/145,0.6),1.5) : 1.0;
-  return Math.round(base * hrf);
+  const secs = a.moving_time || 0;
+  const hrs  = secs / 3600;
+  if (hrs < 0.08) return 0; // ignore activities under ~5 min
+
+  const ftp = window._lastFtp || 200; // use live eFTP if available, else 200W fallback
+
+  // ── Power TSS (most accurate) ────────────────────────────────────────────
+  const np = a.weighted_average_watts || a.average_watts || 0;
+  if (np > 50 && ftp > 100) {
+    const IF  = np / ftp;
+    const tss = (secs * np * IF) / (ftp * 3600) * 100;
+    return Math.round(Math.min(tss, 500)); // cap at 500 TSS (sanity check)
+  }
+
+  // ── HR-based TSS (hrTSS) ─────────────────────────────────────────────────
+  const hr = a.average_heartrate || 0;
+  if (hr > HR_REST + 5) {
+    const hrFrac = (hr - HR_REST) / (HR_THRESHOLD - HR_REST);
+    const hrTSS  = hrs * Math.pow(Math.max(hrFrac, 0), 2) * 100;
+    return Math.round(Math.min(hrTSS, 400));
+  }
+
+  // ── Duration estimate (no power or HR) ───────────────────────────────────
+  const t = a.sport_type || a.type || '';
+  if (t === 'Swim')                       return Math.round(hrs * 60);
+  if (t.includes('Ride'))                 return Math.round(hrs * 50);
+  if (t === 'Run' || t === 'VirtualRun')  return Math.round(hrs * 65);
+  if (t === 'Walk' || t === 'Hike')       return Math.round(hrs * 25);
+  return Math.round(hrs * 40);
 }
 
 function fmtDist(m,t){ if(!m)return'—'; return t==='Swim'?Math.round(m)+'m':(m/1000).toFixed(1)+'km'; }
@@ -4278,6 +4313,11 @@ async function loadAndRender(token) {
   console.log('March 2026 activities:');
   march.forEach(a => console.log(' ', a.start_date.slice(0,10), '|', a.name, '| type:', a.type, '| sport_type:', a.sport_type, '| trainer:', a.trainer));
   console.groupEnd();
+
+  // Pre-compute eFTP so power-based TSS in load() uses the real FTP value
+  // (computeMetrics calls load() which reads window._lastFtp)
+  const preFtp = estimateFTP(activities, 50); // 50 = rough CTL seed, just for FTP estimation
+  window._lastFtp = preFtp.watts || 200;
 
   render(athlete, activities, computeMetrics(activities));
 }
