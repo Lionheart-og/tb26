@@ -2817,7 +2817,10 @@ function render(athlete, activities, metrics) {
         <!-- A-Goal header -->
         <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
           <div style="flex:1;min-width:0;">
-            <div style="font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">${goal.priority||'A1'} Goal</div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+              <span style="font-size:16px;line-height:1;">🥇</span>
+              <span style="font-family:var(--mono);font-size:10px;font-weight:600;color:#f0d060;letter-spacing:.06em;text-transform:uppercase;">${goal.priority||'A1'} Goal</span>
+            </div>
             <div id="gv-name" style="font-size:1.4rem;font-weight:300;letter-spacing:-0.02em;color:#f0d060;">${goal.name}</div>
             <div id="gv-meta" style="font-size:13px;color:var(--muted);margin-top:4px;">${new Date(goal.date+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})} · ${goal.distance}km ${{mtb:'MTB',gravel:'Gravel',road:'Road'}[goal.raceType||'mtb']||'MTB'} · ${goal.location}</div>
           </div>
@@ -2942,23 +2945,30 @@ function render(athlete, activities, metrics) {
           </div>
         </div>
 
-        <!-- B/C Goals -->
+        <!-- All goals sorted by date, with consistent priority badges -->
         ${(()=>{
-          const others = allGoals.filter(g => g.id !== goal.id).sort((a,b) => {
-            const p = {A:0,B:1,C:2}; return (p[a.priority]||3) - (p[b.priority]||3);
-          });
+          const priorityIcon = p => p==='A1'||p==='A'?'🥇':p==='A2'?'🥇':p==='A3'?'🥇':p==='B'?'🥈':'🥉';
+          const priorityCol  = p => p&&p.startsWith('A') ? '#f0d060' : p==='B' ? '#60c8f0' : '#9090a8';
+          // All goals sorted by date ascending
+          const sorted = [...allGoals].sort((a,b) => new Date(a.date) - new Date(b.date));
+          if (sorted.length <= 1) return '';
+          const others = sorted.filter(g => g.id !== goal.id);
           if (!others.length) return '';
           return '<div style="margin-top:1rem;padding-top:1rem;border-top:.5px solid rgba(255,255,255,0.07);">' +
-            '<div style="font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;">Other goals</div>' +
+            '<div style="font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;">All goals — by date</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
             others.map(g => {
               const gDays = Math.ceil((new Date(g.date+'T06:00:00') - new Date()) / 86400000);
               const gWks  = Math.floor(gDays / 7);
               const gType = {mtb:'MTB',gravel:'Gravel',road:'Road'}[g.raceType||'mtb']||'MTB';
-              const priorityCol = g.priority&&g.priority.startsWith('A') ? '#f0d060' : g.priority==='B' ? '#60c8f0' : '#9090a8';
+              const pCol  = priorityCol(g.priority);
+              const pIcon = priorityIcon(g.priority);
               return `<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);border:.5px solid rgba(255,255,255,0.07);border-radius:8px;padding:8px 12px;gap:10px;flex-wrap:wrap;">
                 <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
-                  <span style="font-family:var(--mono);font-size:10px;font-weight:600;color:${priorityCol};background:rgba(255,255,255,0.06);border-radius:4px;padding:2px 7px;">${g.priority}</span>
+                  <div style="display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;">
+                    <span style="font-size:14px;line-height:1;">${pIcon}</span>
+                    <span style="font-family:var(--mono);font-size:8px;font-weight:600;color:${pCol};letter-spacing:.04em;">${g.priority||'B'}</span>
+                  </div>
                   <div style="min-width:0;">
                     <div style="font-size:13px;font-weight:400;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${g.name}</div>
                     <div style="font-family:var(--mono);font-size:10px;color:var(--muted);">${new Date(g.date+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})} · ${g.distance}km ${gType} · sub-${g.timeGoal}hr</div>
@@ -2966,10 +2976,10 @@ function render(athlete, activities, metrics) {
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
                   <div style="text-align:right;">
-                    <div style="font-family:var(--mono);font-size:1.1rem;font-weight:300;color:${priorityCol};">${gDays}</div>
+                    <div style="font-family:var(--mono);font-size:1.1rem;font-weight:300;color:${pCol};">${gDays}</div>
                     <div style="font-family:var(--mono);font-size:9px;color:var(--muted);">days · ${gWks}w</div>
                   </div>
-                  <button onclick="promoteGoal('${g.id}')" title="Make A goal" style="background:rgba(240,208,96,0.08);border:.5px solid rgba(240,208,96,0.25);border-radius:6px;padding:4px 8px;color:#f0d060;font-size:10px;cursor:pointer;font-family:var(--mono);">↑ A</button>
+                  <button onclick="promoteGoal('${g.id}')" title="Promote to A goal" style="background:rgba(240,208,96,0.08);border:.5px solid rgba(240,208,96,0.25);border-radius:6px;padding:4px 8px;color:#f0d060;font-size:10px;cursor:pointer;font-family:var(--mono);">↑ A</button>
                   <button onclick="openGoalEdit('${g.id}')" style="background:rgba(255,255,255,0.05);border:.5px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 8px;color:var(--muted);font-size:10px;cursor:pointer;font-family:var(--mono);">✎</button>
                   <button onclick="deleteGoal('${g.id}')" style="background:rgba(240,96,96,0.06);border:.5px solid rgba(240,96,96,0.2);border-radius:6px;padding:4px 8px;color:#f06060;font-size:10px;cursor:pointer;font-family:var(--mono);">✕</button>
                 </div>
@@ -4473,9 +4483,28 @@ async function loadAndRender(token) {
   console.groupEnd();
 
   // Pre-compute eFTP so power-based TSS in load() uses the real FTP value
-  // (computeMetrics calls load() which reads window._lastFtp)
-  const preFtp = estimateFTP(activities, 50); // 50 = rough CTL seed, just for FTP estimation
+  const preFtp = estimateFTP(activities, 50);
   window._lastFtp = preFtp.watts || 200;
+
+  // Debug: log TSS per activity to find inflation
+  console.group('TSS audit (FTP=' + window._lastFtp + 'W)');
+  const cutDbg = Date.now() - 30*86400000; // last 30 days
+  activities.filter(a => new Date(a.start_date).getTime() > cutDbg)
+    .sort((a,b) => new Date(b.start_date)-new Date(a.start_date))
+    .forEach(a => {
+      const tss = load(a);
+      console.log(
+        a.start_date.slice(0,10),
+        '|', (a.sport_type||a.type).padEnd(20),
+        '| TSS:', String(tss).padStart(4),
+        '| avg_w:', (a.average_watts||0),
+        '| w_avg_w:', (a.weighted_average_watts||0),
+        '| hr:', (a.average_heartrate||0),
+        '| t:', Math.round((a.moving_time||0)/60)+'min',
+        '|', a.name
+      );
+    });
+  console.groupEnd();
 
   render(athlete, activities, computeMetrics(activities));
 }
