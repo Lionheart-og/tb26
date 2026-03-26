@@ -820,7 +820,7 @@ function calcGoalReadiness(currentWkg, currentCtl, activities, goal, weightKg) {
   } else if (composite >= 60) {
     status = 'Building'; statusCol = '#c8f060';
     const phaseAdvice = {
-      'Base 1':  'Good start. Prioritise consistency over intensity — the base you build now compounds over 21 weeks.',
+      'Base 1':  'Good start. Prioritise consistency over intensity — the base you build now compounds over ' + weeksLeft + ' weeks.',
       'Base 2':  'Aerobic engine developing. Add one extra long ' + raceLabel + ' ride this block if schedule allows.',
       'Build 1': 'Threshold work beginning — this is where fitness accelerates. Execute every interval session.',
       'Build 2': 'Good progress but ' + weeksLeft + ' weeks remain. Push the specificity — more outdoor ' + raceLabel + ' time.',
@@ -2907,54 +2907,54 @@ function render(athlete, activities, metrics) {
             <!-- Three components -->
             <div id="readiness-components" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;">
 
-              <!-- W/kg gap -->
-              <div data-rtip="wkg" style="background:rgba(255,255,255,0.03);border-radius:8px;padding:10px 12px;cursor:help;">
-                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">W/kg Power <span style="color:#E6B800;">ⓘ</span></div>
+              <!-- W/kg Power -->
+              <div data-rtip="wkg" style="background:rgba(255,255,255,0.03);border-radius:8px;padding:10px 12px;cursor:help;border:.5px solid ${readiness.wkgGap <= 0 ? 'rgba(96,208,144,0.4)' : 'rgba(240,160,96,0.3)'};">
+                <div style="font-family:var(--mono);font-size:9px;color:${readiness.wkgGap <= 0 ? '#60d090' : '#f0a060'};letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">W/kg Power <span>ⓘ</span></div>
                 <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px;">
-                  <span style="font-size:1.1rem;font-weight:400;color:#E6B800;">${readiness.sustainableWkg.toFixed(2)}</span>
+                  <span style="font-size:1.1rem;font-weight:400;color:${readiness.wkgGap <= 0 ? '#60d090' : '#E6B800'};">${readiness.sustainableWkg.toFixed(2)}</span>
                   <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">@ ${goal.timeGoal}hr</span>
                   <span style="font-family:var(--mono);font-size:10px;color:var(--muted);">→</span>
-                  <span style="font-size:1.1rem;font-weight:400;color:${readiness.wkgGap <= 0 ? '#60d090' : '#c8f060'};">${readiness.targetWkg}</span>
+                  <span style="font-size:1.1rem;font-weight:400;color:${readiness.wkgGap <= 0 ? '#60d090' : 'rgba(255,255,255,0.5)'};">${readiness.targetWkg}</span>
                   <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">needed</span>
                 </div>
                 <div style="height:3px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;margin-bottom:5px;">
-                  <div style="height:100%;width:${readiness.wkgScore}%;background:#E6B800;border-radius:100px;"></div>
+                  <div style="height:100%;width:${readiness.wkgScore}%;background:${readiness.wkgGap <= 0 ? '#60d090' : '#E6B800'};border-radius:100px;"></div>
                 </div>
-                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);">
+                <div style="font-family:var(--mono);font-size:9px;color:${readiness.wkgGap <= 0 ? '#60d090' : '#f0a060'};">
                   ${readiness.wkgGap > 0
-                    ? 'Gap: ' + readiness.wkgGap + ' W/kg · FTP=' + readiness.currentWkg.toFixed(1) + ' decayed by ' + Math.round((1-readiness.decayFactor)*100) + '%'
+                    ? 'Gap: ' + readiness.wkgGap + ' W/kg · decayed by ' + Math.round((1-readiness.decayFactor)*100) + '%'
                     : '✓ Sufficient power for race duration'}
                 </div>
               </div>
 
               <!-- CTL fitness -->
-              <div data-rtip="ctl" style="background:rgba(255,255,255,0.03);border-radius:8px;padding:10px 12px;cursor:help;">
-                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">Fitness (CTL) <span style="color:#c8f060;">ⓘ</span></div>
+              <div data-rtip="ctl" style="background:rgba(255,255,255,0.03);border-radius:8px;padding:10px 12px;cursor:help;border:.5px solid ${fitness >= 85 ? 'rgba(96,208,144,0.4)' : 'rgba(240,160,96,0.3)'};">
+                <div style="font-family:var(--mono);font-size:9px;color:${fitness >= 85 ? '#60d090' : '#f0a060'};letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">Fitness (CTL) <span>ⓘ</span></div>
                 <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px;">
-                  <span style="font-size:1.1rem;font-weight:400;color:#c8f060;">${fitness}</span>
+                  <span style="font-size:1.1rem;font-weight:400;color:${fitness >= 85 ? '#60d090' : '#c8f060'};">${fitness}</span>
                   <span style="font-family:var(--mono);font-size:10px;color:var(--muted);">→</span>
-                  <span style="font-size:1.1rem;font-weight:400;color:${fitness >= 85 ? '#60d090' : '#c8f060'};">85</span>
+                  <span style="font-size:1.1rem;font-weight:400;color:${fitness >= 85 ? '#60d090' : 'rgba(255,255,255,0.5)'};">85</span>
                   <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">target</span>
                 </div>
                 <div style="height:3px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;margin-bottom:5px;">
-                  <div style="height:100%;width:${readiness.ctlScore}%;background:#c8f060;border-radius:100px;"></div>
+                  <div style="height:100%;width:${readiness.ctlScore}%;background:${fitness >= 85 ? '#60d090' : '#c8f060'};border-radius:100px;"></div>
                 </div>
-                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);">
+                <div style="font-family:var(--mono);font-size:9px;color:${fitness >= 85 ? '#60d090' : '#f0a060'};">
                   ${fitness >= 85 ? '✓ Race-ready fitness' : 'Need +' + (85 - fitness) + ' CTL over ' + readiness.weeksLeft + ' weeks'}
                 </div>
               </div>
 
               <!-- Specificity -->
-              <div data-rtip="spec" style="background:rgba(255,255,255,0.03);border-radius:8px;padding:10px 12px;cursor:help;">
-                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">${readiness.specLabel} Specificity <span style="color:#f0a060;">ⓘ</span></div>
+              <div data-rtip="spec" style="background:rgba(255,255,255,0.03);border-radius:8px;padding:10px 12px;cursor:help;border:.5px solid ${readiness.mtbPct >= 60 ? 'rgba(96,208,144,0.4)' : 'rgba(240,160,96,0.3)'};">
+                <div style="font-family:var(--mono);font-size:9px;color:${readiness.mtbPct >= 60 ? '#60d090' : '#f0a060'};letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">${readiness.specLabel} Specificity <span>ⓘ</span></div>
                 <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px;">
-                  <span style="font-size:1.1rem;font-weight:400;color:#f0a060;">${readiness.mtbPct}%</span>
+                  <span style="font-size:1.1rem;font-weight:400;color:${readiness.mtbPct >= 60 ? '#60d090' : '#f0a060'};">${readiness.mtbPct}%</span>
                   <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">${readiness.specificTotal}/${readiness.outdoorTotal} outdoor ${readiness.specLabel} · 90 days</span>
                 </div>
                 <div style="height:3px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;margin-bottom:5px;">
-                  <div style="height:100%;width:${readiness.specScore}%;background:#f0a060;border-radius:100px;"></div>
+                  <div style="height:100%;width:${readiness.specScore}%;background:${readiness.mtbPct >= 60 ? '#60d090' : '#f0a060'};border-radius:100px;"></div>
                 </div>
-                <div style="font-family:var(--mono);font-size:9px;color:var(--muted);">
+                <div style="font-family:var(--mono);font-size:9px;color:${readiness.mtbPct >= 60 ? '#60d090' : '#f0a060'};">
                   ${readiness.mtbPct >= 60 ? '✓ Good trail specificity' : 'Increase outdoor ' + readiness.specLabel + ' — race-specific terrain matters'}
                 </div>
               </div>
