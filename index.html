@@ -1381,9 +1381,10 @@ function buildSteppedProfile(session, totalWidth) {
   ];
 }
 
-// Draw SMOOTH power profile — fills zone areas with bezier-curved transitions
-// Segments are grouped by zone; boundaries between zones use cubic bezier easing.
-// Colour tones preserved per segment; zones flow visually rather than hard-cut.
+// Draw HARD-EDGED power profile — rectangular zone blocks with intra-zone shading
+// Each block is the zone's colour; within the block a subtle vertical gradient
+// suggests power variability (lighter top = higher power within zone, darker = lower).
+// Hard 1px separators between zone changes. Zone labels on tall blocks in card mode.
 // mode: 'card' (tall) | 'cell' (small grid cell)
 function drawPowerProfile(session, canvas, mode) {
   const W = canvas.width, H = canvas.height;
@@ -1401,127 +1402,59 @@ function drawPowerProfile(session, canvas, mode) {
   const PAD_TOP = mode === 'card' ? 6  : 3;
   const PAD_BOT = mode === 'card' ? 4  : 2;
   const drawH   = H - PAD_TOP - PAD_BOT;
-  const BASE_Y  = PAD_TOP + drawH; // y-coordinate of baseline
 
-  // Build point list: midpoint x of each segment, with power height
-  // Transitions between segments use the boundary x as control point
-  const pts = segs.map(s => ({
-    x: (s.x0 + s.x1) / 2,
-    y: PAD_TOP + drawH - Math.round(drawH * s.power),
-    x0: s.x0, x1: s.x1,
-    colour: s.colour,
-    zone: s.zone,
-    power: s.power,
-  }));
-
-  // ── Draw each segment as a smooth filled zone area ────────────────────────
-  // For each segment we draw from its left edge to right edge, with the top
-  // edge curving smoothly using the neighbouring segment heights as guides.
-
-  segs.forEach((seg, i) => {
-    const x0 = seg.x0, x1 = seg.x1;
-    const y  = PAD_TOP + drawH - Math.round(drawH * seg.power);
-
-    // Heights of neighbours — used to create bezier pull toward adjacent zones
-    const prevY = i > 0
-      ? PAD_TOP + drawH - Math.round(drawH * segs[i-1].power)
-      : y;
-    const nextY = i < segs.length - 1
-      ? PAD_TOP + drawH - Math.round(drawH * segs[i+1].power)
-      : y;
-
-    // Transition width — how far into the block the curve resolves
-    const transW = Math.min((x1 - x0) * 0.35, 12);
-
-    // Left edge y: blend from previous segment's height
-    const leftY  = (prevY + y) / 2;
-    // Right edge y: blend toward next segment's height
-    const rightY = (nextY + y) / 2;
-
-    ctx.beginPath();
-    ctx.moveTo(x0, BASE_Y);         // bottom-left
-    ctx.lineTo(x0, leftY);          // left edge, blended height
-
-    // Cubic bezier: left edge → plateau → right edge
-    ctx.bezierCurveTo(
-      x0 + transW, leftY,           // control 1: pull to plateau
-      x0 + transW, y,               // control 2: arrive at plateau
-      x0 + transW + (x1 - x0 - 2 * transW) * 0.1, y  // plateau start
-    );
-    ctx.lineTo(x1 - transW - (x1 - x0 - 2 * transW) * 0.1, y); // plateau end
-    ctx.bezierCurveTo(
-      x1 - transW, y,               // control 1: leave plateau
-      x1 - transW, rightY,          // control 2: descend/rise
-      x1, rightY                    // right edge
-    );
-
-    ctx.lineTo(x1, BASE_Y);         // bottom-right
-    ctx.closePath();
-
-    // Fill with zone colour at reduced alpha
-    const fillAlpha = mode === 'cell' ? 0.50 : 0.40;
-    ctx.fillStyle = seg.colour.replace(/[\d.]+\)$/, m =>
-      (parseFloat(m) * fillAlpha).toFixed(2) + ')');
-    ctx.fill();
-  });
-
-  // ── Draw smooth top-line overlay (single continuous curve) ───────────────
-  // A single polyline passes through each midpoint with bezier smoothing,
-  // drawn in the segment's colour. This makes zones visually distinct while
-  // still connecting smoothly.
-  if (segs.length > 1) {
-    // Draw coloured top-line per segment
-    segs.forEach((seg, i) => {
-      if (i === segs.length - 1) return;
-      const cur  = pts[i], nxt = pts[i+1];
-      const cpX  = (cur.x1 + nxt.x0) / 2; // boundary between segments
-
-      ctx.beginPath();
-      // Left half of current segment plateau to boundary
-      ctx.moveTo(cur.x0 + (cur.x1 - cur.x0) * 0.25, cur.y);
-      ctx.bezierCurveTo(
-        cur.x1 * 0.7 + cur.x0 * 0.3, cur.y,
-        cpX - (nxt.x1 - nxt.x0) * 0.15, nxt.y,
-        nxt.x0 + (nxt.x1 - nxt.x0) * 0.25, nxt.y
-      );
-      ctx.strokeStyle = seg.colour;
-      ctx.lineWidth = mode === 'card' ? 1.5 : 1;
-      ctx.stroke();
-    });
-
-    // First and last segment plateau lines
-    [0, segs.length - 1].forEach(i => {
-      const s = segs[i], p = pts[i];
-      ctx.beginPath();
-      ctx.moveTo(i === 0 ? s.x0 : s.x0 + (s.x1 - s.x0) * 0.25, p.y);
-      ctx.lineTo(i === 0 ? s.x1 - (s.x1 - s.x0) * 0.25 : s.x1, p.y);
-      ctx.strokeStyle = s.colour;
-      ctx.lineWidth = mode === 'card' ? 1.5 : 1;
-      ctx.stroke();
-    });
-  } else {
-    // Single segment — flat line
-    const s = segs[0], y = PAD_TOP + drawH - Math.round(drawH * s.power);
-    ctx.beginPath();
-    ctx.moveTo(s.x0, y); ctx.lineTo(s.x1, y);
-    ctx.strokeStyle = s.colour;
-    ctx.lineWidth = mode === 'card' ? 1.5 : 1;
-    ctx.stroke();
+  // Helper: parse 'rgba(r,g,b,a)' → [r,g,b,a]
+  function parseRgba(s) {
+    const m = s.match(/[\d.]+/g);
+    return m ? [+m[0],+m[1],+m[2],+(m[3]??1)] : [128,128,128,0.85];
   }
 
-  // ── Zone label on tall blocks in card mode ────────────────────────────────
+  segs.forEach(seg => {
+    const x0   = Math.floor(seg.x0);
+    const x1   = Math.ceil(seg.x1);
+    const segW = Math.max(1, x1 - x0);
+    const barH = Math.round(drawH * seg.power);
+    const y    = PAD_TOP + (drawH - barH);
+
+    const [r,g,b,a] = parseRgba(seg.colour);
+
+    // Intra-zone shading: vertical gradient within the block
+    // Top 30% of bar: slightly brighter (higher power within zone)
+    // Bottom 30%: slightly darker (lower power)
+    // This represents natural power variability within the zone band
+    if (barH > 0) {
+      const grad = ctx.createLinearGradient(0, y, 0, y + barH);
+      const hiA  = Math.min(1, a * (mode === 'cell' ? 0.75 : 0.65));
+      const midA = Math.min(1, a * (mode === 'cell' ? 0.50 : 0.40));
+      const loA  = Math.min(1, a * (mode === 'cell' ? 0.30 : 0.22));
+      // Slightly lighter at top (brighter = higher power within zone)
+      grad.addColorStop(0,    `rgba(${Math.min(255,r+20)},${Math.min(255,g+20)},${Math.min(255,b+20)},${hiA})`);
+      grad.addColorStop(0.45, `rgba(${r},${g},${b},${midA})`);
+      grad.addColorStop(1,    `rgba(${Math.max(0,r-15)},${Math.max(0,g-15)},${Math.max(0,b-15)},${loA})`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(x0, y, segW, barH);
+    }
+
+    // Top edge — full-opacity zone colour line (1–2px)
+    ctx.fillStyle = seg.colour;
+    ctx.fillRect(x0, y, segW, mode === 'card' ? 2 : 1);
+
+    // Zone label on tall blocks in card mode
+    if (mode === 'card' && seg.zone &&
+        seg.zone !== 'Z1' && seg.zone !== 'Z2' && seg.zone !== 'strength' && barH > 14) {
+      ctx.fillStyle = 'rgba(255,255,255,0.65)';
+      ctx.font = '500 8px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(seg.zone, x0 + segW / 2, y + 9);
+    }
+  });
+
+  // Hard 1px separator lines between zone changes (not between same-zone blocks)
   if (mode === 'card') {
-    segs.forEach(seg => {
-      if (seg.zone && seg.zone !== 'Z1' && seg.zone !== 'Z2' && seg.zone !== 'strength') {
-        const barH = Math.round(drawH * seg.power);
-        if (barH > 14) {
-          const y = PAD_TOP + drawH - barH;
-          const cx = (seg.x0 + seg.x1) / 2;
-          ctx.fillStyle = 'rgba(255,255,255,0.6)';
-          ctx.font = '500 8px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText(seg.zone, cx, y + 9);
-        }
+    ctx.fillStyle = 'rgba(10,10,15,0.8)';
+    segs.forEach((seg, i) => {
+      if (i > 0 && segs[i-1].zone !== seg.zone) {
+        ctx.fillRect(Math.floor(seg.x0), PAD_TOP, 1, drawH);
       }
     });
   }
