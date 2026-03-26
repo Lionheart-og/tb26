@@ -1988,10 +1988,10 @@ function buildTrainingPlanVisual(activities) {
           ctx.scale(DPR, DPR);
 
           if (isPast && hasActivity && actForDay) {
-            // ── Draw ACTUAL effort profile — rich multi-segment with power variation ──
-            const ftpW2 = 265;
+            // ── Draw ACTUAL effort profile ──────────────────────────────────────
+            const ftpW2 = window._lastFtp || 239;
             const avgW2 = actForDay.average_watts || Math.round(ftpW2 * 0.72);
-            const drawMax2 = Math.max(actForDay.max_watts || 0, avgW2 * 1.5);
+            const drawMax2 = avgW2 * 1.40; // scale to avg, not sprint max
             function zoneCol2(w) {
               const r = w/ftpW2;
               if(r<0.56)return'#6b7db5';if(r<0.76)return'#4a9eff';if(r<0.90)return'#60c8f0';
@@ -2002,13 +2002,15 @@ function buildTrainingPlanVisual(activities) {
               const frac=i/nS;
               let pw;
               if(frac<0.15) pw=avgW2*(0.50+(frac/0.15)*0.30);
-              else if(frac<0.80){const v=Math.sin(i*1.7)*0.15+Math.sin(i*0.5)*0.10;pw=avgW2*(1.0+v);if(i%5===2)pw=avgW2*1.25;if(i%7===4)pw=avgW2*0.75;}
+              else if(frac<0.80){const v=Math.sin(i*1.7)*0.15+Math.sin(i*0.5)*0.10;pw=avgW2*(1.0+v);if(i%5===2)pw=avgW2*1.22;if(i%7===4)pw=avgW2*0.75;}
               else pw=avgW2*(1.0-((frac-0.80)/0.20)*0.35);
-              pw=Math.max(0,Math.round(pw));
-              const fH=Math.max(2,Math.round((pw/drawMax2)*(H-4)));
+              pw=Math.max(0,Math.min(drawMax2*1.05,Math.round(pw)));
+              const fH=Math.max(2,Math.round((Math.min(pw,drawMax2)/drawMax2)*(H-4)));
               const y=H-fH; const col=zoneCol2(pw);
+              const ri2=parseInt(col.slice(1,3),16),gi2=parseInt(col.slice(3,5),16),bi2=parseInt(col.slice(5,7),16);
               const gr=ctx.createLinearGradient(0,y,0,H);
-              gr.addColorStop(0,col+'ee');gr.addColorStop(1,col+'33');
+              gr.addColorStop(0,`rgba(${Math.min(255,ri2+30)},${Math.min(255,gi2+30)},${Math.min(255,bi2+30)},0.90)`);
+              gr.addColorStop(1,`rgba(${Math.max(0,ri2-15)},${Math.max(0,gi2-15)},${Math.max(0,bi2-15)},0.35)`);
               ctx.fillStyle=gr; ctx.fillRect(Math.floor(i*sW2),y,Math.ceil(sW2+0.5),fH);
               ctx.fillStyle=col; ctx.fillRect(Math.floor(i*sW2),y,Math.ceil(sW2+0.5),2);
             }
@@ -2387,18 +2389,19 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
       mark.style.cssText = 'position:absolute;top:4px;right:8px;font-family:var(--mono);font-size:9px;color:rgba(200,240,96,0.6);letter-spacing:.08em;';
       mark.textContent = 'ACTUAL EFFORT';
       profileBg.appendChild(mark);
-      requestAnimationFrame(function(){requestAnimationFrame(function(){
-        cvs.width = cvs.offsetWidth; cvs.height = PROF_H;
+      // Use setTimeout to ensure the element is laid out before reading offsetWidth
+      setTimeout(function(){
+        cvs.width  = cvs.offsetWidth || 800;
+        cvs.height = PROF_H;
         const ctx = cvs.getContext('2d');
         const W = cvs.width, H = PROF_H;
         const PAD_TOP = 8, PAD_BOT = 6;
         const drawH = H - PAD_TOP - PAD_BOT;
-        const avgW = act.average_watts || Math.round(ftpW * 0.72);
-        const maxW = act.max_watts     || Math.round(avgW * 1.45);
+        const avgW  = act.average_watts || Math.round(ftpW * 0.72);
         const avgHR = act.average_heartrate || 0;
         const maxHR = act.max_heartrate || (avgHR ? avgHR * 1.15 : 0);
 
-        // Zone boundaries as fractions of FTP
+        // Zone definitions — colour by FTP fraction
         const ZONES = [
           { max: 0.56, col: '#6b7db5', label: 'Z1' },
           { max: 0.76, col: '#4a9eff', label: 'Z2' },
@@ -2411,138 +2414,104 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
           const r = w / ftpW;
           return (ZONES.find(z => r < z.max) || ZONES[ZONES.length-1]).col;
         }
-        function zoneName(w) {
-          const r = w / ftpW;
-          return (ZONES.find(z => r < z.max) || ZONES[ZONES.length-1]).label;
-        }
 
-        // Draw subtle horizontal zone boundary lines
-        // Zone boundary lines use drawMax defined below
-        ZONES.slice(0,-1).forEach(z => {
+        // Scale: cap at 140% of avg so bars fill the chart meaningfully
+        const drawMax = avgW * 1.40;
+
+        // Zone boundary horizontal dashed lines
+        ZONES.slice(0,-1).forEach(function(z) {
           const boundW = z.max * ftpW;
           const boundY = PAD_TOP + drawH - Math.round((boundW / drawMax) * drawH);
-          ctx.strokeStyle = z.col.replace(')', ',0.15)').replace('rgb(','rgba(') || 'rgba(255,255,255,0.08)';
-          ctx.setLineDash([2,4]);
-          ctx.lineWidth = 1;
+          if (boundY < PAD_TOP || boundY > PAD_TOP + drawH) return; // skip if off-chart
+          ctx.strokeStyle = z.col + '30';
+          ctx.setLineDash([2,4]); ctx.lineWidth = 1;
           ctx.beginPath(); ctx.moveTo(0, boundY); ctx.lineTo(W, boundY); ctx.stroke();
           ctx.setLineDash([]);
-          // Zone label on left edge
-          ctx.fillStyle = z.col + '80';
-          ctx.font = '500 8px monospace';
-          ctx.textAlign = 'left';
-          ctx.fillText(z.label, 3, boundY - 2);
+          ctx.fillStyle = z.col + '90';
+          ctx.font = '500 8px monospace'; ctx.textAlign = 'left';
+          ctx.fillText(z.label, 4, boundY - 2);
         });
 
-        // Generate segments — warmup → main effort with variation → cooldown
+        // Build power segments
         const nSegs = 26;
         const segW  = W / nSegs;
         const segs  = [];
         for (let i = 0; i < nSegs; i++) {
           const frac = i / nSegs;
           let power;
-          if (frac < 0.12) {
-            power = avgW * (0.45 + (frac / 0.12) * 0.35);
-          } else if (frac < 0.22) {
-            power = avgW * (0.80 + ((frac - 0.12) / 0.10) * 0.20);
-          } else if (frac < 0.82) {
-            const variation = Math.sin(i * 1.7) * 0.15 + Math.sin(i * 0.5) * 0.10;
-            power = avgW * (1.0 + variation);
-            if (i % 5 === 2) power = avgW * (1.22 + Math.abs(Math.sin(i)) * 0.15);
-            if (i % 7 === 4) power = avgW * 0.72;
-          } else if (frac < 0.92) {
-            power = avgW * (1.0 - ((frac - 0.82) / 0.10) * 0.22);
-          } else {
-            power = avgW * (0.78 - ((frac - 0.92) / 0.08) * 0.28);
+          if      (frac < 0.12) { power = avgW * (0.45 + (frac/0.12) * 0.35); }
+          else if (frac < 0.22) { power = avgW * (0.80 + ((frac-0.12)/0.10) * 0.20); }
+          else if (frac < 0.82) {
+            const v = Math.sin(i*1.7)*0.15 + Math.sin(i*0.5)*0.10;
+            power = avgW * (1.0 + v);
+            if (i%5===2) power = avgW * (1.22 + Math.abs(Math.sin(i))*0.15);
+            if (i%7===4) power = avgW * 0.72;
           }
-          power = Math.max(0, Math.round(power));
-          segs.push({ x: i * segW, w: segW + 0.5, power });
+          else if (frac < 0.92) { power = avgW * (1.0 - ((frac-0.82)/0.10)*0.22); }
+          else                  { power = avgW * (0.78 - ((frac-0.92)/0.08)*0.28); }
+          segs.push({ x: i*segW, w: segW+0.5, power: Math.max(0, Math.round(power)) });
         }
 
-        // Scale to 140% of avg so bars fill the chart — sprint spikes clip but zones show clearly
-        const drawMax = avgW * 1.40;
-
-        // Draw power bars — colour by zone, intra-zone gradient shading
+        // Draw power bars with intra-zone gradient
         segs.forEach(function(seg) {
-          const fillH = Math.max(4, Math.round((seg.power / drawMax) * drawH));
-          const y = PAD_TOP + drawH - fillH;
+          const fillH = Math.max(4, Math.round((Math.min(seg.power, drawMax) / drawMax) * drawH));
+          const y   = PAD_TOP + drawH - fillH;
           const col = zoneColour(seg.power);
-          // Parse hex colour #rrggbb → r,g,b integers
-          const ri = parseInt(col.slice(1,3),16);
-          const gi = parseInt(col.slice(3,5),16);
-          const bi = parseInt(col.slice(5,7),16);
+          const ri  = parseInt(col.slice(1,3),16);
+          const gi  = parseInt(col.slice(3,5),16);
+          const bi  = parseInt(col.slice(5,7),16);
 
-          // Intra-zone vertical gradient (brighter top = higher power within zone)
-          const grad = ctx.createLinearGradient(0, y, 0, y + fillH);
-          grad.addColorStop(0,   `rgba(${Math.min(255,ri+30)},${Math.min(255,gi+30)},${Math.min(255,bi+30)},0.85)`);
-          grad.addColorStop(0.5, `rgba(${ri},${gi},${bi},0.65)`);
-          grad.addColorStop(1,   `rgba(${Math.max(0,ri-20)},${Math.max(0,gi-20)},${Math.max(0,bi-20)},0.35)`);
+          const grad = ctx.createLinearGradient(0, y, 0, y+fillH);
+          grad.addColorStop(0,   `rgba(${Math.min(255,ri+35)},${Math.min(255,gi+35)},${Math.min(255,bi+35)},0.90)`);
+          grad.addColorStop(0.5, `rgba(${ri},${gi},${bi},0.70)`);
+          grad.addColorStop(1,   `rgba(${Math.max(0,ri-20)},${Math.max(0,gi-20)},${Math.max(0,bi-20)},0.38)`);
           ctx.fillStyle = grad;
           ctx.fillRect(Math.floor(seg.x), y, Math.ceil(seg.w), fillH);
-
-          // 2px bright top cap in full zone colour
+          // Bright 2px top cap
           ctx.fillStyle = col;
           ctx.fillRect(Math.floor(seg.x), y, Math.ceil(seg.w), 2);
-
-          // 1px dark gap between bars
-          ctx.fillStyle = 'rgba(0,0,0,0.5)';
-          ctx.fillRect(Math.floor(seg.x + seg.w - 0.5), y, 1, fillH);
+          // 1px dark separator
+          ctx.fillStyle = 'rgba(0,0,0,0.55)';
+          ctx.fillRect(Math.floor(seg.x+seg.w-0.5), y, 1, fillH);
         });
 
-        // Avg power dashed reference line
-        const avgY = PAD_TOP + drawH - Math.round((avgW / drawMax) * drawH);
-        ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-        ctx.setLineDash([4,4]); ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(0, avgY); ctx.lineTo(W, avgY); ctx.stroke();
+        // Avg power reference line
+        const avgY = PAD_TOP + drawH - Math.round((avgW/drawMax)*drawH);
+        ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+        ctx.setLineDash([4,4]); ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(0,avgY); ctx.lineTo(W,avgY); ctx.stroke();
         ctx.setLineDash([]);
         if (act.average_watts) {
-          ctx.fillStyle = 'rgba(255,255,255,0.9)';
-          ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
-          const lbl = Math.round(act.average_watts) + 'W avg';
-          ctx.fillText(lbl, W / 2, avgY > PAD_TOP + 14 ? avgY - 4 : avgY + 14);
+          ctx.fillStyle='rgba(255,255,255,0.9)'; ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
+          ctx.fillText(Math.round(act.average_watts)+'W avg', W/2, avgY>PAD_TOP+14?avgY-4:avgY+14);
         }
 
-        // HR overlay line — scaled to same drawH, mapped avg→max HR range
+        // HR overlay
         if (avgHR && maxHR) {
-          const hrMin = Math.max(50, avgHR * 0.75); // lower bound for scale
+          const hrMin = Math.max(50, avgHR*0.75);
           const hrRange = maxHR - hrMin;
-          // Simulate HR curve: HR lags power — use similar pattern but smoother + shifted
-          const hrPts = segs.map((seg, i) => {
-            const frac = i / nSegs;
-            let hrVal;
-            if (frac < 0.15) {
-              hrVal = hrMin + hrRange * (0.20 + (frac/0.15) * 0.35);
-            } else if (frac < 0.85) {
-              // HR drifts slightly upward through the ride (cardiac drift)
-              const drift = (frac - 0.15) / 0.70 * 0.12;
-              const hrVariation = Math.sin(i * 0.8) * 0.04; // smoother than power
-              hrVal = avgHR + hrRange * (drift + hrVariation - 0.05);
-            } else {
-              hrVal = avgHR * (1.02 - ((frac - 0.85)/0.15) * 0.18);
-            }
-            hrVal = Math.max(hrMin, Math.min(maxHR, hrVal));
-            const hrY = PAD_TOP + drawH - Math.round(((hrVal - hrMin) / hrRange) * drawH * 0.75);
-            return { x: seg.x + seg.w/2, y: hrY };
+          const hrPts = segs.map(function(seg,i){
+            const frac=i/nSegs;
+            let hr;
+            if (frac<0.15) hr=hrMin+hrRange*(0.20+(frac/0.15)*0.35);
+            else if (frac<0.85) {
+              const drift=(frac-0.15)/0.70*0.12;
+              hr=avgHR+hrRange*(drift+Math.sin(i*0.8)*0.04-0.05);
+            } else hr=avgHR*(1.02-((frac-0.85)/0.15)*0.18);
+            hr=Math.max(hrMin,Math.min(maxHR,hr));
+            return {x:seg.x+seg.w/2, y:PAD_TOP+drawH-Math.round(((hr-hrMin)/hrRange)*drawH*0.78)};
           });
-
-          // Draw HR as smooth line
-          ctx.beginPath();
-          ctx.moveTo(hrPts[0].x, hrPts[0].y);
-          for (let i = 1; i < hrPts.length - 1; i++) {
-            const cx = (hrPts[i].x + hrPts[i+1].x) / 2;
-            const cy = (hrPts[i].y + hrPts[i+1].y) / 2;
-            ctx.quadraticCurveTo(hrPts[i].x, hrPts[i].y, cx, cy);
+          ctx.beginPath(); ctx.moveTo(hrPts[0].x,hrPts[0].y);
+          for(let i=1;i<hrPts.length-1;i++){
+            const cx=(hrPts[i].x+hrPts[i+1].x)/2, cy=(hrPts[i].y+hrPts[i+1].y)/2;
+            ctx.quadraticCurveTo(hrPts[i].x,hrPts[i].y,cx,cy);
           }
-          ctx.lineTo(hrPts[hrPts.length-1].x, hrPts[hrPts.length-1].y);
-          ctx.strokeStyle = 'rgba(240,160,240,0.9)';
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-
-          // HR label
-          ctx.fillStyle = 'rgba(240,160,240,0.8)';
-          ctx.font = '500 9px monospace'; ctx.textAlign = 'right';
-          ctx.fillText(Math.round(avgHR)+' bpm HR avg', W - 4, hrPts[Math.floor(hrPts.length/2)].y - 4);
+          ctx.lineTo(hrPts[hrPts.length-1].x,hrPts[hrPts.length-1].y);
+          ctx.strokeStyle='rgba(240,160,240,0.9)'; ctx.lineWidth=2; ctx.stroke();
+          ctx.fillStyle='rgba(240,160,240,0.85)'; ctx.font='500 9px monospace'; ctx.textAlign='right';
+          ctx.fillText(Math.round(avgHR)+' bpm avg HR', W-6, hrPts[Math.floor(hrPts.length/2)].y-5);
         }
-      });});
+      }, 80); // 80ms gives the DOM time to lay out
     } else {
       profileBg.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:'+PROF_H+'px;font-size:28px;">'+(isGym?'🏋️':emoji(act.sport_type||act.type))+'</div>';
     }
