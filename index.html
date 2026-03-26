@@ -1381,8 +1381,10 @@ function buildSteppedProfile(session, totalWidth) {
   ];
 }
 
-// Draw STEPPED power profile — pure rectangles, no curves
-// mode: 'card' (tall, 280×56 area) | 'cell' (small grid cell)
+// Draw SMOOTH power profile — fills zone areas with bezier-curved transitions
+// Segments are grouped by zone; boundaries between zones use cubic bezier easing.
+// Colour tones preserved per segment; zones flow visually rather than hard-cut.
+// mode: 'card' (tall) | 'cell' (small grid cell)
 function drawPowerProfile(session, canvas, mode) {
   const W = canvas.width, H = canvas.height;
   const ctx = canvas.getContext('2d');
@@ -1391,7 +1393,6 @@ function drawPowerProfile(session, canvas, mode) {
   const segs = buildSteppedProfile(session, W);
 
   if (!segs || !segs.length) {
-    // Rest — just a thin baseline
     ctx.fillStyle = 'rgba(107,107,128,0.15)';
     ctx.fillRect(0, H - 2, W, 2);
     return;
@@ -1400,39 +1401,128 @@ function drawPowerProfile(session, canvas, mode) {
   const PAD_TOP = mode === 'card' ? 6  : 3;
   const PAD_BOT = mode === 'card' ? 4  : 2;
   const drawH   = H - PAD_TOP - PAD_BOT;
+  const BASE_Y  = PAD_TOP + drawH; // y-coordinate of baseline
 
-  // Draw each segment as a filled rectangle + top-stroke
-  segs.forEach(seg => {
-    const x0 = Math.floor(seg.x0);
-    const x1 = Math.ceil(seg.x1);
-    const segW = Math.max(1, x1 - x0);
-    const barH = Math.round(drawH * seg.power);
-    const y    = PAD_TOP + (drawH - barH);
+  // Build point list: midpoint x of each segment, with power height
+  // Transitions between segments use the boundary x as control point
+  const pts = segs.map(s => ({
+    x: (s.x0 + s.x1) / 2,
+    y: PAD_TOP + drawH - Math.round(drawH * s.power),
+    x0: s.x0, x1: s.x1,
+    colour: s.colour,
+    zone: s.zone,
+    power: s.power,
+  }));
 
-    // Fill
-    const fillAlpha = mode === 'cell' ? 0.55 : 0.45;
-    const fillColour = seg.colour.replace(/[\d.]+\)$/, m => (parseFloat(m) * fillAlpha).toFixed(2) + ')');
-    ctx.fillStyle = fillColour;
-    ctx.fillRect(x0, y, segW, barH);
+  // ── Draw each segment as a smooth filled zone area ────────────────────────
+  // For each segment we draw from its left edge to right edge, with the top
+  // edge curving smoothly using the neighbouring segment heights as guides.
 
-    // Top edge line (full opacity, 1–2px)
-    ctx.fillStyle = seg.colour;
-    ctx.fillRect(x0, y, segW, mode === 'card' ? 2 : 1);
+  segs.forEach((seg, i) => {
+    const x0 = seg.x0, x1 = seg.x1;
+    const y  = PAD_TOP + drawH - Math.round(drawH * seg.power);
 
-    // Zone label on tall blocks in card mode
-    if (mode === 'card' && seg.zone && seg.zone !== 'Z1' && seg.zone !== 'Z2' && seg.zone !== 'strength' && barH > 14) {
-      ctx.fillStyle = 'rgba(255,255,255,0.65)';
-      ctx.font = '500 8px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText(seg.zone, x0 + segW / 2, y + 9);
-    }
+    // Heights of neighbours — used to create bezier pull toward adjacent zones
+    const prevY = i > 0
+      ? PAD_TOP + drawH - Math.round(drawH * segs[i-1].power)
+      : y;
+    const nextY = i < segs.length - 1
+      ? PAD_TOP + drawH - Math.round(drawH * segs[i+1].power)
+      : y;
+
+    // Transition width — how far into the block the curve resolves
+    const transW = Math.min((x1 - x0) * 0.35, 12);
+
+    // Left edge y: blend from previous segment's height
+    const leftY  = (prevY + y) / 2;
+    // Right edge y: blend toward next segment's height
+    const rightY = (nextY + y) / 2;
+
+    ctx.beginPath();
+    ctx.moveTo(x0, BASE_Y);         // bottom-left
+    ctx.lineTo(x0, leftY);          // left edge, blended height
+
+    // Cubic bezier: left edge → plateau → right edge
+    ctx.bezierCurveTo(
+      x0 + transW, leftY,           // control 1: pull to plateau
+      x0 + transW, y,               // control 2: arrive at plateau
+      x0 + transW + (x1 - x0 - 2 * transW) * 0.1, y  // plateau start
+    );
+    ctx.lineTo(x1 - transW - (x1 - x0 - 2 * transW) * 0.1, y); // plateau end
+    ctx.bezierCurveTo(
+      x1 - transW, y,               // control 1: leave plateau
+      x1 - transW, rightY,          // control 2: descend/rise
+      x1, rightY                    // right edge
+    );
+
+    ctx.lineTo(x1, BASE_Y);         // bottom-right
+    ctx.closePath();
+
+    // Fill with zone colour at reduced alpha
+    const fillAlpha = mode === 'cell' ? 0.50 : 0.40;
+    ctx.fillStyle = seg.colour.replace(/[\d.]+\)$/, m =>
+      (parseFloat(m) * fillAlpha).toFixed(2) + ')');
+    ctx.fill();
   });
 
-  // Gap lines between segments (1px dark separator)
-  if (mode === 'card') {
-    ctx.fillStyle = 'rgba(10,10,15,0.7)';
+  // ── Draw smooth top-line overlay (single continuous curve) ───────────────
+  // A single polyline passes through each midpoint with bezier smoothing,
+  // drawn in the segment's colour. This makes zones visually distinct while
+  // still connecting smoothly.
+  if (segs.length > 1) {
+    // Draw coloured top-line per segment
     segs.forEach((seg, i) => {
-      if (i > 0) ctx.fillRect(Math.floor(seg.x0), PAD_TOP, 1, drawH);
+      if (i === segs.length - 1) return;
+      const cur  = pts[i], nxt = pts[i+1];
+      const cpX  = (cur.x1 + nxt.x0) / 2; // boundary between segments
+
+      ctx.beginPath();
+      // Left half of current segment plateau to boundary
+      ctx.moveTo(cur.x0 + (cur.x1 - cur.x0) * 0.25, cur.y);
+      ctx.bezierCurveTo(
+        cur.x1 * 0.7 + cur.x0 * 0.3, cur.y,
+        cpX - (nxt.x1 - nxt.x0) * 0.15, nxt.y,
+        nxt.x0 + (nxt.x1 - nxt.x0) * 0.25, nxt.y
+      );
+      ctx.strokeStyle = seg.colour;
+      ctx.lineWidth = mode === 'card' ? 1.5 : 1;
+      ctx.stroke();
+    });
+
+    // First and last segment plateau lines
+    [0, segs.length - 1].forEach(i => {
+      const s = segs[i], p = pts[i];
+      ctx.beginPath();
+      ctx.moveTo(i === 0 ? s.x0 : s.x0 + (s.x1 - s.x0) * 0.25, p.y);
+      ctx.lineTo(i === 0 ? s.x1 - (s.x1 - s.x0) * 0.25 : s.x1, p.y);
+      ctx.strokeStyle = s.colour;
+      ctx.lineWidth = mode === 'card' ? 1.5 : 1;
+      ctx.stroke();
+    });
+  } else {
+    // Single segment — flat line
+    const s = segs[0], y = PAD_TOP + drawH - Math.round(drawH * s.power);
+    ctx.beginPath();
+    ctx.moveTo(s.x0, y); ctx.lineTo(s.x1, y);
+    ctx.strokeStyle = s.colour;
+    ctx.lineWidth = mode === 'card' ? 1.5 : 1;
+    ctx.stroke();
+  }
+
+  // ── Zone label on tall blocks in card mode ────────────────────────────────
+  if (mode === 'card') {
+    segs.forEach(seg => {
+      if (seg.zone && seg.zone !== 'Z1' && seg.zone !== 'Z2' && seg.zone !== 'strength') {
+        const barH = Math.round(drawH * seg.power);
+        if (barH > 14) {
+          const y = PAD_TOP + drawH - barH;
+          const cx = (seg.x0 + seg.x1) / 2;
+          ctx.fillStyle = 'rgba(255,255,255,0.6)';
+          ctx.font = '500 8px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(seg.zone, cx, y + 9);
+        }
+      }
     });
   }
 }
@@ -2726,7 +2816,7 @@ function render(athlete, activities, metrics) {
 
   // FTP method label
   const ftpMethodLabel = {
-    best_20min:  ftp.bestDate ? 'NP-based · ' + ftp.bestDate : 'best NP effort',
+    best_20min:  ftp.bestDate ? 'NP on ' + (ftp.bestDate||'').replace(/-/g,'.') : 'best NP effort',
     cp_model:    'power-duration model',
     best_effort: 'best effort estimate',
     ctl:         'estimated from training load',
