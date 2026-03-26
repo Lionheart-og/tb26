@@ -471,23 +471,28 @@ function calcConsistencyStreak(activities) {
   return { streak, totalActiveWeeks: weekSet.size };
 }
 
-// ── EWMA Metrics (Intervals.icu) ──────────────────────────────────────────────
+// ── EWMA Metrics (Intervals.icu methodology) ─────────────────────────────────
+// CTL requires ~6 months of history to converge from 0.
+// Intervals.icu uses your full training history; we approximate with 180 days.
+// The extra 90 days (days 180→90) seed CTL/ATL so the displayed 90 days are accurate.
 function computeMetrics(activities) {
   const byDay = {};
   for (const a of activities) {
-    const k = new Date(a.start_date).toDateString();
+    const k = localDateKey(new Date(a.start_date));
     byDay[k] = (byDay[k]||0) + load(a);
   }
   const today = new Date(); today.setHours(0,0,0,0);
   let ctl=0, atl=0;
   const hist = [];
-  for (let i=89; i>=0; i--) {
-    const d = new Date(today); d.setDate(d.getDate()-i);
-    const dl = byDay[d.toDateString()] || 0;
+  // Run EWMA for 180 days; only record last 90 for chart/display
+  for (let i=179; i>=0; i--) {
+    const d  = new Date(today); d.setDate(d.getDate()-i);
+    const dk = localDateKey(d);
+    const dl = byDay[dk] || 0;
     const form = Math.round(ctl - atl);
     ctl += (dl - ctl) / 42;
     atl += (dl - atl) / 7;
-    hist.push({ date:new Date(d), ctl:Math.round(ctl), atl:Math.round(atl), form, load:dl });
+    if (i < 90) hist.push({ date:new Date(d), ctl:Math.round(ctl), atl:Math.round(atl), form, load:dl });
   }
   return { fitness:Math.round(ctl), fatigue:Math.round(atl), form:Math.round(ctl-atl), hist };
 }
@@ -568,16 +573,18 @@ function saveGoals(arr) {
   try { localStorage.setItem(GOALS_SK, JSON.stringify(arr)); } catch(e) {}
 }
 
-// Primary (A) goal — drives training plan + readiness
+// Primary (A) goal — the earliest upcoming A-priority goal drives training plan
 function loadGoal() {
   const goals = loadGoals();
-  return goals.find(g => g.priority === 'A') || goals[0] || { ...GOAL_DEFAULTS, id: makeGoalId() };
+  const aGoals = goals.filter(g => g.priority && g.priority.startsWith('A'))
+    .sort((a,b) => new Date(a.date) - new Date(b.date));
+  return aGoals[0] || goals[0] || { ...GOAL_DEFAULTS, id: makeGoalId() };
 }
 
 // Legacy compat
 function saveGoal(g) {
   const goals = loadGoals();
-  const idx   = goals.findIndex(x => x.priority === 'A');
+  const idx   = goals.findIndex(x => x.priority === 'A1' || x.priority === 'A');
   if (idx >= 0) goals[idx] = { ...goals[idx], ...g };
   else goals.unshift({ ...g, priority:'A', id: makeGoalId() });
   saveGoals(goals);
@@ -2810,7 +2817,7 @@ function render(athlete, activities, metrics) {
         <!-- A-Goal header -->
         <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
           <div style="flex:1;min-width:0;">
-            <div style="font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">A Goal</div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">${goal.priority||'A1'} Goal</div>
             <div id="gv-name" style="font-size:1.4rem;font-weight:300;letter-spacing:-0.02em;color:#f0d060;">${goal.name}</div>
             <div id="gv-meta" style="font-size:13px;color:var(--muted);margin-top:4px;">${new Date(goal.date+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})} · ${goal.distance}km ${{mtb:'MTB',gravel:'Gravel',road:'Road'}[goal.raceType||'mtb']||'MTB'} · ${goal.location}</div>
           </div>
@@ -2937,7 +2944,7 @@ function render(athlete, activities, metrics) {
 
         <!-- B/C Goals -->
         ${(()=>{
-          const others = allGoals.filter(g => g.priority !== 'A').sort((a,b) => {
+          const others = allGoals.filter(g => g.id !== goal.id).sort((a,b) => {
             const p = {A:0,B:1,C:2}; return (p[a.priority]||3) - (p[b.priority]||3);
           });
           if (!others.length) return '';
@@ -2948,7 +2955,7 @@ function render(athlete, activities, metrics) {
               const gDays = Math.ceil((new Date(g.date+'T06:00:00') - new Date()) / 86400000);
               const gWks  = Math.floor(gDays / 7);
               const gType = {mtb:'MTB',gravel:'Gravel',road:'Road'}[g.raceType||'mtb']||'MTB';
-              const priorityCol = g.priority==='B' ? '#60c8f0' : '#9090a8';
+              const priorityCol = g.priority&&g.priority.startsWith('A') ? '#f0d060' : g.priority==='B' ? '#60c8f0' : '#9090a8';
               return `<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);border:.5px solid rgba(255,255,255,0.07);border-radius:8px;padding:8px 12px;gap:10px;flex-wrap:wrap;">
                 <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
                   <span style="font-family:var(--mono);font-size:10px;font-weight:600;color:${priorityCol};background:rgba(255,255,255,0.06);border-radius:4px;padding:2px 7px;">${g.priority}</span>
@@ -3014,7 +3021,9 @@ function render(athlete, activities, metrics) {
           <div>
             <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Priority</div>
             <select id="ge-priority" style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px 10px;font-size:14px;color:var(--text);outline:none;">
-              <option value="A">🥇 A — Primary (drives training plan)</option>
+              <option value="A1">🥇 A1 — Primary (next race, drives plan)</option>
+              <option value="A2">🥇 A2 — Primary (2nd A race)</option>
+              <option value="A3">🥇 A3 — Primary (3rd A race)</option>
               <option value="B">🥈 B — Secondary</option>
               <option value="C">🥉 C — Tertiary</option>
             </select>
@@ -3710,7 +3719,7 @@ window.openGoalEdit = function(goalId) {
   } else {
     // New goal — pick next available priority
     const used = goals.map(x => x.priority);
-    const priority = ['A','B','C'].find(p => !used.includes(p)) || 'C';
+    const priority = ['A1','A2','A3','B','C'].find(p => !used.includes(p)) || 'C';
     g = { ...GOAL_DEFAULTS, name:'', date:'', id: makeGoalId(), priority };
   }
   const titleEl = document.getElementById('ge-form-title');
@@ -3743,15 +3752,13 @@ window.applyGoalEdit = function() {
     startTime:document.getElementById('ge-start')?.value             || GOAL_DEFAULTS.startTime,
     location: document.getElementById('ge-loc')?.value.trim()        || GOAL_DEFAULTS.location,
     raceType: document.getElementById('ge-type')?.value              || GOAL_DEFAULTS.raceType,
-    priority: document.getElementById('ge-priority')?.value          || 'B',
+    priority: document.getElementById('ge-priority')?.value          || 'A1',
   };
 
   const goals = loadGoals();
 
   // If this is an A goal, demote any existing A to B
-  if (g.priority === 'A') {
-    goals.forEach(x => { if (x.id !== g.id && x.priority === 'A') x.priority = 'B'; });
-  }
+  // A1/A2/A3 can coexist — no demotion needed
 
   const idx = goals.findIndex(x => x.id === g.id);
   if (idx >= 0) goals[idx] = g;
@@ -3783,7 +3790,7 @@ window.promoteGoal = function(goalId) {
   goals.forEach(g => { if (g.priority === 'A') g.priority = 'B'; });
   const target = goals.find(g => g.id === goalId);
   if (target) target.priority = 'A';
-  goals.sort((a,b) => ({A:0,B:1,C:2}[a.priority]||3) - ({A:0,B:1,C:2}[b.priority]||3));
+  const pOrd={A1:0,A2:1,A3:2,A:0,B:3,C:4};goals.sort((a,b)=>(pOrd[a.priority]??5)-(pOrd[b.priority]??5)||new Date(a.date)-new Date(b.date));
   saveGoals(goals);
   setTimeout(() => location.reload(), 200);
 };
@@ -3791,7 +3798,7 @@ window.promoteGoal = function(goalId) {
 window.deleteGoal = function(goalId) {
   const goals = loadGoals().filter(g => g.id !== goalId);
   // Ensure there's always an A goal
-  if (goals.length && !goals.find(g => g.priority === 'A')) goals[0].priority = 'A';
+  if (goals.length && !goals.find(g => g.priority&&g.priority.startsWith('A'))) goals[0].priority = 'A1';
   saveGoals(goals);
   setTimeout(() => location.reload(), 200);
 };
@@ -4404,7 +4411,7 @@ function showAthlete(ath) {
 async function loadAndRender(token) {
   document.getElementById('status-text').textContent = 'Loading activities...';
   const H     = { Authorization: 'Bearer ' + token };
-  const after = Math.floor((Date.now() - 90*86400000) / 1000);
+  const after = Math.floor((Date.now() - 180*86400000) / 1000); // 180 days for CTL convergence
   const base  = 'https://www.strava.com/api/v3/athlete/activities?per_page=100&after=' + after;
 
   const [athRes, actRes1] = await Promise.all([
@@ -4426,14 +4433,16 @@ async function loadAndRender(token) {
     throw new Error(page1?.message || JSON.stringify(page1));
   }
 
-  // Fetch page 2 if page 1 was full (may have >100 rides in 90 days)
+  // Fetch pages until we have all 180 days (up to 3 pages of 100)
   let activities = page1;
-  if (page1.length === 100) {
+  for (let p = 2; p <= 3; p++) {
+    if (activities.length < p * 100 - 100) break; // previous page wasn't full
     try {
-      const actRes2 = await fetch(base + '&page=2', { headers: H });
-      const page2   = await actRes2.json();
-      if (Array.isArray(page2) && page2.length > 0) activities = page1.concat(page2);
-    } catch(e) { /* non-critical — page 1 is sufficient for most athletes */ }
+      const res  = await fetch(base + '&page=' + p, { headers: H });
+      const page = await res.json();
+      if (Array.isArray(page) && page.length > 0) activities = activities.concat(page);
+      else break;
+    } catch(e) { break; }
   }
   // Clean up OAuth code from URL without reloading
   if (location.search.includes('code=')) {
