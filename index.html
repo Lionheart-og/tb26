@@ -390,32 +390,53 @@ let ATHLETE_WEIGHT_KG = getAthleteWeight();
 // This is physiologically grounded and consistent with academic literature.
 
 function estimateFTP(activities, ctl) {
-  const rideTypes = ['Ride','VirtualRide','MountainBikeRide','GravelRide'];
+  // Use both type and sport_type to catch all ride variants
+  const isRide = a => ['Ride','VirtualRide','MountainBikeRide','GravelRide']
+    .includes(a.sport_type || a.type);
   const cutoff = Date.now() - 90 * 86400000;
 
   const powRides = activities.filter(a =>
-    rideTypes.includes(a.type) &&
-    a.average_watts > 80 &&
-    a.moving_time >= 1200 && // must be at least 20 min
-    new Date(a.start_date).getTime() > cutoff
+    isRide(a) &&
+    new Date(a.start_date).getTime() > cutoff &&
+    a.moving_time >= 1200  // ≥ 20 min
   );
 
-  if (powRides.length >= 1) {
-    // Scale each ride's average power to its 20-min equivalent
-    // Using Monod-Scherrer exponent 0.07 (well-validated for 20-120 min range)
-    const estimates = powRides.map(a => {
-      const t = a.moving_time;
-      // Scale to what the rider would average over 20 min (1200s)
-      // Longer rides have lower avg power → scale up; shorter → scale down
-      const p20 = a.average_watts * Math.pow(t / 1200, 0.07);
-      return { p20: Math.round(p20), eftp: Math.round(p20 * 0.95), duration: t, name: a.name };
+  // Prefer weighted_average_watts (NP proxy) — much closer to actual FTP
+  // than average_watts which includes coasting/descents
+  const withPower = powRides.filter(a =>
+    (a.weighted_average_watts || a.average_watts || 0) > 80
+  );
+
+  if (withPower.length >= 1) {
+    const estimates = withPower.map(a => {
+      const np   = a.weighted_average_watts || a.average_watts;
+      const secs = a.moving_time;
+
+      // Monod-Scherrer power-duration model:
+      // P(t) = FTP × (3600/t)^0.07
+      // → FTP estimate = NP / (3600/t)^0.07 = NP × (t/3600)^0.07
+      //
+      // This scales the observed NP DOWN to a 60-min FTP equivalent.
+      // Short hard rides scale down less; long easy rides scale down more.
+      // Valid range: 20 min–3 hr. Beyond 3hr the model loses accuracy.
+      const t     = Math.min(secs, 10800); // cap at 3hr for validity
+      const ftpEst = np * Math.pow(t / 3600, 0.07);
+
+      return { ftpEst: Math.round(ftpEst), np, secs, name: a.name,
+               date: a.start_date.slice(0,10) };
     });
 
-    // Best eFTP = highest scaled estimate
-    const best = estimates.reduce((a, b) => a.eftp > b.eftp ? a : b);
+    const best = estimates.reduce((a,b) => a.ftpEst > b.ftpEst ? a : b);
 
-    if (best.eftp >= 80 && best.eftp <= 600) {
-      return { watts: best.eftp, method: 'best_20min', p20: best.p20, n: powRides.length };
+    if (best.ftpEst >= 100 && best.ftpEst <= 600) {
+      return {
+        watts: best.ftpEst,
+        method: 'best_20min',
+        p20: best.np,
+        n: withPower.length,
+        bestRide: best.name,
+        bestDate: best.date
+      };
     }
   }
 
@@ -2705,7 +2726,7 @@ function render(athlete, activities, metrics) {
 
   // FTP method label
   const ftpMethodLabel = {
-    best_20min:  'best 20-min effort × 0.95',
+    best_20min:  ftp.bestDate ? 'NP-based · ' + ftp.bestDate : 'best NP effort',
     cp_model:    'power-duration model',
     best_effort: 'best effort estimate',
     ctl:         'estimated from training load',
@@ -4495,6 +4516,11 @@ async function loadAndRender(token) {
   // Pre-compute eFTP so power-based TSS in load() uses the real FTP value
   const preFtp = estimateFTP(activities, 50);
   window._lastFtp = preFtp.watts || 200;
+  console.log('eFTP estimate:', preFtp.watts + 'W',
+    '| method:', preFtp.method,
+    '| best ride:', preFtp.bestRide||'—',
+    '| date:', preFtp.bestDate||'—',
+    '| NP used:', preFtp.p20||'—');
 
   // Debug: log TSS per activity to find inflation
   console.group('TSS audit (FTP=' + window._lastFtp + 'W)');
