@@ -2933,7 +2933,7 @@ function render(athlete, activities, metrics) {
                 <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px;">
                   <span style="font-size:1.1rem;font-weight:400;color:${fitness >= 85 ? '#60d090' : '#c8f060'};">${fitness}</span>
                   <span style="font-family:var(--mono);font-size:10px;color:var(--muted);">→</span>
-                  <span style="font-size:1.1rem;font-weight:400;color:${fitness >= 85 ? '#60d090' : 'rgba(255,255,255,0.5)'};">85</span>
+                  <span style="font-size:1.1rem;font-weight:400;color:#60d090;">85</span>
                   <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">target</span>
                 </div>
                 <div style="height:3px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;margin-bottom:5px;">
@@ -2976,15 +2976,15 @@ function render(athlete, activities, metrics) {
           </div>
         </div>
 
-        <!-- All goals sorted by date, with consistent priority badges -->
+        <!-- All goals sorted by date, with consistent priority badges + click-to-peek readiness -->
         ${(()=>{
           const priorityIcon = p => p==='A1'||p==='A'?'🥇':p==='A2'?'🥇':p==='A3'?'🥇':p==='B'?'🥈':'🥉';
           const priorityCol  = p => p&&p.startsWith('A') ? '#f0d060' : p==='B' ? '#60c8f0' : '#9090a8';
-          // All goals sorted by date ascending
           const sorted = [...allGoals].sort((a,b) => new Date(a.date) - new Date(b.date));
           if (sorted.length <= 1) return '';
           const others = sorted.filter(g => g.id !== goal.id);
           if (!others.length) return '';
+
           return '<div style="margin-top:1rem;padding-top:1rem;border-top:.5px solid rgba(255,255,255,0.07);">' +
             '<div style="font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;">All goals — by date</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
@@ -2994,25 +2994,81 @@ function render(athlete, activities, metrics) {
               const gType = {mtb:'MTB',gravel:'Gravel',road:'Road'}[g.raceType||'mtb']||'MTB';
               const pCol  = priorityCol(g.priority);
               const pIcon = priorityIcon(g.priority);
-              return `<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);border:.5px solid rgba(255,255,255,0.07);border-radius:8px;padding:8px 12px;gap:10px;flex-wrap:wrap;">
-                <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
-                  <div style="display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;">
-                    <span style="font-size:14px;line-height:1;">${pIcon}</span>
-                    <span style="font-family:var(--mono);font-size:8px;font-weight:600;color:${pCol};letter-spacing:.04em;">${g.priority||'B'}</span>
+              // Pre-compute mini readiness for this goal
+              const gr = calcGoalReadiness(parseFloat(wkg)||0, fitness, activities, g, ATHLETE_WEIGHT_KG);
+              const scoreCol = gr.statusCol;
+              const wkgOk  = gr.wkgGap <= 0;
+              const ctlOk  = fitness >= 85;
+              const specOk = gr.mtbPct >= 60;
+              const peekId = 'peek-' + g.id;
+
+              return `<div style="background:rgba(255,255,255,0.02);border:.5px solid rgba(255,255,255,0.07);border-radius:8px;overflow:hidden;">
+                <!-- Card header — click to toggle peek -->
+                <div onclick="(function(){var p=document.getElementById('${peekId}');p.style.display=p.style.display==='none'?'block':'none';})()" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;gap:10px;flex-wrap:wrap;cursor:pointer;">
+                  <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
+                    <div style="display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;">
+                      <span style="font-size:14px;line-height:1;">${pIcon}</span>
+                      <span style="font-family:var(--mono);font-size:8px;font-weight:600;color:${pCol};letter-spacing:.04em;">${g.priority||'B'}</span>
+                    </div>
+                    <div style="min-width:0;">
+                      <div style="font-size:13px;font-weight:400;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${g.name}</div>
+                      <div style="font-family:var(--mono);font-size:10px;color:var(--muted);">${new Date(g.date+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})} · ${g.distance}km ${gType} · sub-${g.timeGoal}hr</div>
+                    </div>
                   </div>
-                  <div style="min-width:0;">
-                    <div style="font-size:13px;font-weight:400;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${g.name}</div>
-                    <div style="font-family:var(--mono);font-size:10px;color:var(--muted);">${new Date(g.date+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})} · ${g.distance}km ${gType} · sub-${g.timeGoal}hr</div>
+                  <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                    <!-- Mini readiness score pill -->
+                    <div style="font-family:var(--mono);font-size:11px;font-weight:500;color:${scoreCol};background:rgba(255,255,255,0.04);border:.5px solid ${scoreCol}44;border-radius:100px;padding:2px 10px;">${gr.score}/100</div>
+                    <div style="text-align:right;">
+                      <div style="font-family:var(--mono);font-size:1.1rem;font-weight:300;color:${pCol};">${gDays}</div>
+                      <div style="font-family:var(--mono);font-size:9px;color:var(--muted);">days · ${gWks}w</div>
+                    </div>
+                    <button onclick="event.stopPropagation();promoteGoal('${g.id}')" title="Promote to A goal" style="background:rgba(240,208,96,0.08);border:.5px solid rgba(240,208,96,0.25);border-radius:6px;padding:4px 8px;color:#f0d060;font-size:10px;cursor:pointer;font-family:var(--mono);">↑ A</button>
+                    <button onclick="event.stopPropagation();openGoalEdit('${g.id}')" style="background:rgba(255,255,255,0.05);border:.5px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 8px;color:var(--muted);font-size:10px;cursor:pointer;font-family:var(--mono);">✎</button>
+                    <button onclick="event.stopPropagation();deleteGoal('${g.id}')" style="background:rgba(240,96,96,0.06);border:.5px solid rgba(240,96,96,0.2);border-radius:6px;padding:4px 8px;color:#f06060;font-size:10px;cursor:pointer;font-family:var(--mono);">✕</button>
+                    <span style="font-family:var(--mono);font-size:10px;color:var(--muted);">▾</span>
                   </div>
                 </div>
-                <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-                  <div style="text-align:right;">
-                    <div style="font-family:var(--mono);font-size:1.1rem;font-weight:300;color:${pCol};">${gDays}</div>
-                    <div style="font-family:var(--mono);font-size:9px;color:var(--muted);">days · ${gWks}w</div>
+
+                <!-- Peek panel — hidden by default, shown on click -->
+                <div id="${peekId}" style="display:none;padding:10px 12px;border-top:.5px solid rgba(255,255,255,0.06);background:rgba(0,0,0,0.15);">
+                  <!-- Score bar -->
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                    <div style="font-family:var(--mono);font-size:10px;color:${scoreCol};font-weight:500;">${gr.status}</div>
+                    <div style="flex:1;height:4px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;">
+                      <div style="height:100%;width:${gr.score}%;background:linear-gradient(90deg,#f06060,#f0a060,#c8f060,#60d090);border-radius:100px;"></div>
+                    </div>
+                    <div style="font-family:var(--mono);font-size:10px;color:var(--muted);">${gr.advice}</div>
                   </div>
-                  <button onclick="promoteGoal('${g.id}')" title="Promote to A goal" style="background:rgba(240,208,96,0.08);border:.5px solid rgba(240,208,96,0.25);border-radius:6px;padding:4px 8px;color:#f0d060;font-size:10px;cursor:pointer;font-family:var(--mono);">↑ A</button>
-                  <button onclick="openGoalEdit('${g.id}')" style="background:rgba(255,255,255,0.05);border:.5px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 8px;color:var(--muted);font-size:10px;cursor:pointer;font-family:var(--mono);">✎</button>
-                  <button onclick="deleteGoal('${g.id}')" style="background:rgba(240,96,96,0.06);border:.5px solid rgba(240,96,96,0.2);border-radius:6px;padding:4px 8px;color:#f06060;font-size:10px;cursor:pointer;font-family:var(--mono);">✕</button>
+                  <!-- Three mini metric tiles -->
+                  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
+                    <!-- W/kg -->
+                    <div style="background:rgba(255,255,255,0.02);border:.5px solid ${wkgOk?'rgba(96,208,144,0.35)':'rgba(240,160,96,0.25)'};border-radius:6px;padding:7px 9px;">
+                      <div style="font-family:var(--mono);font-size:8px;color:${wkgOk?'#60d090':'#f0a060'};text-transform:uppercase;margin-bottom:3px;">W/kg</div>
+                      <div style="font-family:var(--mono);font-size:11px;color:${wkgOk?'#60d090':'#E6B800'};">${gr.sustainableWkg.toFixed(2)} → <span style="color:${wkgOk?'#60d090':'rgba(255,255,255,0.6)'};">${gr.targetWkg}</span></div>
+                      <div style="height:2px;background:rgba(255,255,255,0.07);border-radius:100px;margin:4px 0;">
+                        <div style="height:100%;width:${gr.wkgScore}%;background:${wkgOk?'#60d090':'#E6B800'};border-radius:100px;"></div>
+                      </div>
+                      <div style="font-family:var(--mono);font-size:8px;color:${wkgOk?'#60d090':'#f0a060'};">${wkgOk?'✓ Met':'Gap '+gr.wkgGap+' W/kg'}</div>
+                    </div>
+                    <!-- CTL -->
+                    <div style="background:rgba(255,255,255,0.02);border:.5px solid ${ctlOk?'rgba(96,208,144,0.35)':'rgba(240,160,96,0.25)'};border-radius:6px;padding:7px 9px;">
+                      <div style="font-family:var(--mono);font-size:8px;color:${ctlOk?'#60d090':'#f0a060'};text-transform:uppercase;margin-bottom:3px;">Fitness (CTL)</div>
+                      <div style="font-family:var(--mono);font-size:11px;color:${ctlOk?'#60d090':'#c8f060'};">${fitness} → <span style="color:#60d090;">85</span></div>
+                      <div style="height:2px;background:rgba(255,255,255,0.07);border-radius:100px;margin:4px 0;">
+                        <div style="height:100%;width:${gr.ctlScore}%;background:${ctlOk?'#60d090':'#c8f060'};border-radius:100px;"></div>
+                      </div>
+                      <div style="font-family:var(--mono);font-size:8px;color:${ctlOk?'#60d090':'#f0a060'};">${ctlOk?'✓ Met':'Need +'+(85-fitness)+' CTL'}</div>
+                    </div>
+                    <!-- Specificity -->
+                    <div style="background:rgba(255,255,255,0.02);border:.5px solid ${specOk?'rgba(96,208,144,0.35)':'rgba(240,160,96,0.25)'};border-radius:6px;padding:7px 9px;">
+                      <div style="font-family:var(--mono);font-size:8px;color:${specOk?'#60d090':'#f0a060'};text-transform:uppercase;margin-bottom:3px;">${gr.specLabel} Spec.</div>
+                      <div style="font-family:var(--mono);font-size:11px;color:${specOk?'#60d090':'#f0a060'};">${gr.mtbPct}% <span style="font-size:8px;color:var(--muted);">${gr.specificTotal}/${gr.outdoorTotal}</span></div>
+                      <div style="height:2px;background:rgba(255,255,255,0.07);border-radius:100px;margin:4px 0;">
+                        <div style="height:100%;width:${gr.specScore}%;background:${specOk?'#60d090':'#f0a060'};border-radius:100px;"></div>
+                      </div>
+                      <div style="font-family:var(--mono);font-size:8px;color:${specOk?'#60d090':'#f0a060'};">${specOk?'✓ Met':'Increase outdoor'}</div>
+                    </div>
+                  </div>
                 </div>
               </div>`;
             }).join('') +
