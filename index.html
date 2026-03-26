@@ -313,15 +313,16 @@ function emoji(t) {
 //
 // Priority 4: Duration estimate
 const HR_REST      = 50;
-const HR_THRESHOLD = 175; // Lactate Threshold HR — typical trained cyclist
+const HR_THRESHOLD = 175; // default LTHR — overridden by Strava zones via window._HR_THRESHOLD
 
 function load(a) {
   const secs = a.moving_time || 0;
   const hrs  = secs / 3600;
   if (hrs < 0.08) return 0;
 
-  const ftp = window._lastFtp || 200;
-  const t   = a.sport_type || a.type || '';
+  const ftp  = window._lastFtp || 200;
+  const lthr = window._HR_THRESHOLD || HR_THRESHOLD;
+  const t    = a.sport_type || a.type || '';
 
   // Non-cycling activities — use suffer score or HR only, no power path
   const isCycling = t.includes('Ride') || t === 'VirtualRide';
@@ -345,7 +346,7 @@ function load(a) {
   // ── 3. HR-based TSS ──────────────────────────────────────────────────────
   const hr = a.average_heartrate || 0;
   if (hr > HR_REST + 10) {
-    const hrFrac = Math.max(0, (hr - HR_REST) / (HR_THRESHOLD - HR_REST));
+    const hrFrac = Math.max(0, (hr - HR_REST) / (lthr - HR_REST));
     const hrTSS  = hrs * Math.pow(Math.min(hrFrac, 1.3), 2) * 100;
     return Math.round(Math.min(hrTSS, 350));
   }
@@ -2406,35 +2407,46 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
         const maxHR = act.max_heartrate || (avgHR ? avgHR * 1.15 : 0);
         const minHR = Math.max(50, avgHR * 0.72);
 
-        // Power zone definitions
-        const ZONES = [
-          { max: 0.56, col: '#6b7db5', label: 'Z1', hrMax: 0.68 },
-          { max: 0.76, col: '#4a9eff', label: 'Z2', hrMax: 0.83 },
-          { max: 0.90, col: '#60c8f0', label: 'Z3', hrMax: 0.94 },
-          { max: 1.05, col: '#f0a060', label: 'Z4', hrMax: 1.02 },
-          { max: 1.20, col: '#f06060', label: 'Z5', hrMax: 1.10 },
-          { max: 99,   col: '#f030a0', label: 'Z6', hrMax: 1.20 },
-        ];
-        function zoneColour(w) {
-          const r = w / ftpW;
-          return (ZONES.find(z => r < z.max) || ZONES[ZONES.length-1]).col;
+        // Power zone definitions — from Strava athlete zones if available, else defaults
+        const ZONES = window._zoneConfig.power.map(function(z) {
+          return { max: z.maxFrac, col: z.col, label: z.label };
+        });
+        function zoneColour(w) { return getPowerZoneColour(w, ftpW); }
+
+        // Zone helpers — use _zoneConfig for consistency with rest of dashboard
+        const ZONE_CEIL  = window._zoneConfig.powerCeil;
+        const ZONE_BANDS = {}; // compute from _zoneConfig
+        window._zoneConfig.power.forEach(function(z,i){
+          const lo = i>0 ? window._zoneConfig.power[i-1].maxFrac : 0;
+          const hi = z.maxFrac===99 ? 1.60 : z.maxFrac;
+          ZONE_BANDS[z.label] = [lo, hi];
+        });
+        function zoneOfW(w) { return getPowerZone(w, ftpW).label; }
+        function zoneBrightness(w) {
+          const z=zoneOfW(w), bd=ZONE_BANDS[z]||[0,0.56];
+          const r=w/ftpW;
+          return Math.max(0,Math.min(1,(r-bd[0])/(bd[1]-bd[0])));
+        }
+        function zoneCeilY(z) {
+          return PAD_TOP + drawH - Math.round((ZONE_CEIL[z]||0.20) * drawH);
         }
 
         // Scale
         const drawMax = avgW * 1.40;
 
-        // ── Left axis: Power zone labels ─────────────────────────────────────
-        ctx.font = '500 8px monospace'; ctx.textAlign = 'right';
-        ZONES.slice(0,-1).forEach(function(z) {
-          const boundW = z.max * ftpW;
-          const boundY = PAD_TOP + drawH - Math.round((boundW / drawMax) * drawH);
-          if (boundY < PAD_TOP || boundY > PAD_TOP + drawH) return;
-          ctx.strokeStyle = z.col + '25';
+        // ── Left axis: Power zone labels — aligned to bar ceiling heights ─────
+        ctx.font = '500 8px monospace';
+        ['Z1','Z2','Z3','Z4','Z5'].forEach(function(zn, zi) {
+          const y = zoneCeilY(zn);
+          const col = ZONES[zi].col;
+          // Dashed boundary line
+          ctx.strokeStyle = col + '22';
           ctx.setLineDash([2,4]); ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.moveTo(PAD_LEFT, boundY); ctx.lineTo(PAD_LEFT+drawW, boundY); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(PAD_LEFT, y); ctx.lineTo(PAD_LEFT+drawW, y); ctx.stroke();
           ctx.setLineDash([]);
-          ctx.fillStyle = z.col + 'cc';
-          ctx.fillText(z.label, PAD_LEFT - 3, boundY + 3);
+          // Label
+          ctx.fillStyle = col + 'cc'; ctx.textAlign = 'right';
+          ctx.fillText(zn, PAD_LEFT - 3, y + 3);
         });
 
         // Build power segments
@@ -2457,18 +2469,19 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
           segs.push({ x: PAD_LEFT + i*segW, w: segW+0.5, power: Math.max(0, Math.round(power)) });
         }
 
-        // Zone helpers
-        const ZONE_CEIL  = { Z1:0.20, Z2:0.40, Z3:0.58, Z4:0.76, Z5:0.92, Z6:1.0 };
-        const ZONE_BANDS = { Z1:[0,0.56], Z2:[0.56,0.76], Z3:[0.76,0.90], Z4:[0.90,1.05], Z5:[1.05,1.20], Z6:[1.20,1.60] };
-        function zoneOfW(w) {
-          const r=w/ftpW;
-          if(r<0.56)return'Z1';if(r<0.76)return'Z2';if(r<0.90)return'Z3';
-          if(r<1.05)return'Z4';if(r<1.20)return'Z5';return'Z6';
-        }
-        function zoneBrightness(w) {
-          const r=w/ftpW, z=zoneOfW(w), bd=ZONE_BANDS[z];
-          return Math.max(0,Math.min(1,(r-bd[0])/(bd[1]-bd[0])));
-        }
+        // Build HR points (used for both drawing and hover)
+        const hrRange = avgHR && maxHR ? maxHR - minHR : 1;
+        const hrPts = segs.map(function(seg,i){
+          const frac=i/nSegs;
+          let hr;
+          if(frac<0.12) hr=minHR+hrRange*(0.15+(frac/0.12)*0.40);
+          else if(frac<0.85){const drift=(frac-0.12)/0.73*0.15;const react=Math.sin(i*1.4)*0.08+Math.sin(i*0.7)*0.05;hr=avgHR+hrRange*(drift+react-0.06);}
+          else hr=avgHR*(1.01-((frac-0.85)/0.15)*0.20);
+          hr=Math.max(minHR,Math.min(maxHR||180,hr));
+          const hrY=PAD_TOP+drawH-Math.round(((hr-minHR)/hrRange)*drawH*0.80);
+          return {x:seg.x+seg.w/2, y:hrY, hr:Math.round(hr), power:seg.power, mins:Math.round((i/nSegs)*durMins)};
+        });
+        const durMins=Math.round((act.moving_time||0)/60);
 
         // Draw power bars — zone ceiling height, brightness by actual watts
         segs.forEach(function(seg, i) {
@@ -2498,24 +2511,11 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
         ctx.setLineDash([]);
         if(act.average_watts){ctx.fillStyle='rgba(255,255,255,0.9)';ctx.font='bold 11px sans-serif';ctx.textAlign='center';ctx.fillText(Math.round(act.average_watts)+'W avg',PAD_LEFT+drawW/2,avgY>PAD_TOP+14?avgY-4:avgY+14);}
 
-        // ── HR overlay — raw polyline + right axis ────────────────────────────
+        // ── HR overlay — uses pre-built hrPts ────────────────────────────────
         if (avgHR && maxHR) {
-          const hrRange=maxHR-minHR;
-          const hrPts=segs.map(function(seg,i){
-            const frac=i/nSegs;
-            let hr;
-            if(frac<0.12) hr=minHR+hrRange*(0.15+(frac/0.12)*0.40);
-            else if(frac<0.85){const drift=(frac-0.12)/0.73*0.15;const react=Math.sin(i*1.4)*0.08+Math.sin(i*0.7)*0.05;hr=avgHR+hrRange*(drift+react-0.06);}
-            else hr=avgHR*(1.01-((frac-0.85)/0.15)*0.20);
-            hr=Math.max(minHR,Math.min(maxHR,hr));
-            return {x:seg.x+seg.w/2,y:PAD_TOP+drawH-Math.round(((hr-minHR)/hrRange)*drawH*0.80)};
-          });
-          // Raw polyline — no smoothing
           ctx.beginPath(); ctx.moveTo(hrPts[0].x,hrPts[0].y);
           for(let i=1;i<hrPts.length;i++) ctx.lineTo(hrPts[i].x,hrPts[i].y);
           ctx.strokeStyle='rgba(240,160,240,0.85)'; ctx.lineWidth=1.5; ctx.stroke();
-
-          // Right axis: HR zone labels
           const HR_ZONES=[{pct:0.60,label:'Z1',col:'#6b7db5'},{pct:0.70,label:'Z2',col:'#4a9eff'},{pct:0.80,label:'Z3',col:'#60c8f0'},{pct:0.90,label:'Z4',col:'#f0a060'},{pct:1.00,label:'Z5',col:'#f06060'}];
           ctx.font='500 8px monospace'; ctx.textAlign='left';
           HR_ZONES.forEach(function(hz){
@@ -2523,17 +2523,15 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
             if(hrBound<minHR||hrBound>maxHR)return;
             const hrY=PAD_TOP+drawH-Math.round(((hrBound-minHR)/hrRange)*drawH*0.80);
             if(hrY<PAD_TOP||hrY>PAD_TOP+drawH)return;
-            ctx.strokeStyle=hz.col+'20'; ctx.setLineDash([1,5]); ctx.lineWidth=0.5;
-            ctx.beginPath(); ctx.moveTo(PAD_LEFT,hrY); ctx.lineTo(PAD_LEFT+drawW,hrY); ctx.stroke();
-            ctx.setLineDash([]);
-            ctx.fillStyle=hz.col+'bb'; ctx.fillText(hz.label,PAD_LEFT+drawW+4,hrY+3);
+            ctx.strokeStyle=hz.col+'18'; ctx.setLineDash([1,5]); ctx.lineWidth=0.5;
+            ctx.beginPath(); ctx.moveTo(PAD_LEFT,hrY); ctx.lineTo(PAD_LEFT+drawW,hrY); ctx.stroke(); ctx.setLineDash([]);
+            ctx.fillStyle=hz.col+'cc'; ctx.fillText(hz.label,PAD_LEFT+drawW+4,hrY+3);
           });
-          ctx.fillStyle='rgba(240,160,240,0.85)'; ctx.font='500 9px monospace'; ctx.textAlign='left';
+          ctx.fillStyle='rgba(240,160,240,0.8)'; ctx.font='500 8px monospace'; ctx.textAlign='left';
           ctx.fillText(Math.round(avgHR)+' bpm',PAD_LEFT+drawW+4,hrPts[Math.floor(hrPts.length/2)].y-4);
         }
 
         // ── Time axis ─────────────────────────────────────────────────────────
-        const durMins=Math.round((act.moving_time||0)/60);
         const axisY=PAD_TOP+drawH+2;
         ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1;
         ctx.beginPath(); ctx.moveTo(PAD_LEFT,axisY); ctx.lineTo(PAD_LEFT+drawW,axisY); ctx.stroke();
@@ -2542,9 +2540,38 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
           const px=PAD_LEFT+Math.round((t/5)*drawW);
           const mins=Math.round((t/5)*durMins);
           const lbl=mins>=60?Math.floor(mins/60)+'h'+(mins%60?String(mins%60).padStart(2,'0')+'m':''): mins+'m';
-          ctx.fillStyle='rgba(255,255,255,0.12)'; ctx.fillRect(px,axisY,1,4);
-          ctx.fillStyle='rgba(255,255,255,0.40)'; ctx.fillText(lbl,Math.max(PAD_LEFT+8,Math.min(PAD_LEFT+drawW-8,px)),axisY+12);
+          ctx.fillStyle='rgba(255,255,255,0.10)'; ctx.fillRect(px,axisY,1,4);
+          ctx.fillStyle='rgba(255,255,255,0.38)'; ctx.fillText(lbl,Math.max(PAD_LEFT+10,Math.min(PAD_LEFT+drawW-10,px)),axisY+12);
         }
+
+        // ── Crosshair tooltip ─────────────────────────────────────────────────
+        const tip=document.createElement('div');
+        tip.style.cssText='position:absolute;display:none;pointer-events:none;background:#16161e;border:.5px solid rgba(255,255,255,0.14);border-radius:8px;padding:6px 10px;font-family:var(--mono);font-size:10px;color:var(--text);line-height:1.8;white-space:nowrap;box-shadow:0 8px 24px rgba(0,0,0,0.6);z-index:10;';
+        profileBg.appendChild(tip);
+        cvs.addEventListener('mousemove',function(e){
+          const rect=cvs.getBoundingClientRect();
+          const mx=(e.clientX-rect.left)*(cvs.width/rect.width);
+          if(mx<PAD_LEFT||mx>PAD_LEFT+drawW){tip.style.display='none';return;}
+          let closest=segs[0],closestIdx=0,minD=Infinity;
+          segs.forEach(function(seg,i){const d=Math.abs(seg.x+seg.w/2-mx);if(d<minD){minD=d;closest=seg;closestIdx=i;}});
+          const z=zoneOfW(closest.power), zCol=zoneColour(closest.power);
+          const hp=hrPts[closestIdx], timeStr=hp?hp.mins>=60?Math.floor(hp.mins/60)+'h'+String(hp.mins%60).padStart(2,'0')+'m':hp.mins+'m':'—';
+          tip.innerHTML='<span style="color:'+zCol+';font-weight:600;">'+z+'</span> · <span style="color:'+zCol+'">'+Math.round(closest.power)+'W</span>'+
+            (hp&&avgHR?' · <span style="color:rgba(240,160,240,0.9);">'+Math.round(hp.hr||avgHR)+' bpm</span>':'')+
+            '<br><span style="color:var(--muted)">⏱ '+timeStr+'</span>';
+          tip.style.display='block';
+          const relX=e.clientX-rect.left, relY=e.clientY-rect.top;
+          tip.style.left=(relX+14+160>rect.width?relX-168:relX+14)+'px';
+          tip.style.top=Math.max(2,relY-24)+'px';
+          // Crosshair lines
+          const cx=closest.x+closest.w/2;
+          ctx.save(); ctx.strokeStyle='rgba(255,255,255,0.30)'; ctx.setLineDash([3,3]); ctx.lineWidth=1;
+          ctx.beginPath(); ctx.moveTo(cx,PAD_TOP); ctx.lineTo(cx,PAD_TOP+drawH); ctx.stroke();
+          if(hp&&avgHR){ctx.beginPath(); ctx.moveTo(PAD_LEFT,hp.y); ctx.lineTo(PAD_LEFT+drawW,hp.y); ctx.stroke();}
+          ctx.setLineDash([]); ctx.restore();
+        });
+        cvs.addEventListener('mouseleave',function(){tip.style.display='none';}); 
+
 
       }, 80); // 80ms gives the DOM time to lay out
     } else {
@@ -4609,15 +4636,107 @@ function showAthlete(ath) {
   document.getElementById('avatar-initials').textContent = (ath.firstname?.[0]||'') + (ath.lastname?.[0]||'');
 }
 
+// ── Zone Configuration ────────────────────────────────────────────────────────
+// Defaults: Coggan 6-zone model (power as FTP fractions, HR as max HR fractions)
+// Overridden by Strava athlete zones when available.
+//
+// Power zones: upper boundary as fraction of FTP
+// Z1 < 0.56, Z2 < 0.76, Z3 < 0.90, Z4 < 1.05, Z5 < 1.20, Z6 = above
+//
+// HR zones: upper boundary as fraction of max HR (if no Strava HR zones)
+// Z1 < 0.68, Z2 < 0.83, Z3 < 0.94, Z4 < 1.02, Z5 = above
+
+window._zoneConfig = {
+  power: [
+    { label:'Z1', maxFrac: 0.56, col:'#6b7db5' },
+    { label:'Z2', maxFrac: 0.76, col:'#4a9eff' },
+    { label:'Z3', maxFrac: 0.90, col:'#60c8f0' },
+    { label:'Z4', maxFrac: 1.05, col:'#f0a060' },
+    { label:'Z5', maxFrac: 1.20, col:'#f06060' },
+    { label:'Z6', maxFrac: 99,   col:'#f030a0' },
+  ],
+  hr: [
+    { label:'Z1', maxFrac: 0.68, col:'#6b7db5' },
+    { label:'Z2', maxFrac: 0.83, col:'#4a9eff' },
+    { label:'Z3', maxFrac: 0.94, col:'#60c8f0' },
+    { label:'Z4', maxFrac: 1.02, col:'#f0a060' },
+    { label:'Z5', maxFrac: 99,   col:'#f06060' },
+  ],
+  // Ceiling heights for prescribed plan display (fraction of chart height)
+  powerCeil: { Z1:0.20, Z2:0.40, Z3:0.58, Z4:0.76, Z5:0.92, Z6:1.0 },
+};
+
+// Parse Strava /athlete/zones response and update _zoneConfig
+// Strava returns: { heart_rate: { zones: [{min,max},...] }, power: { zones: [{min,max},...] } }
+function applyStravaZones(data) {
+  // Power zones — Strava gives absolute watt values; convert to FTP fractions
+  // We need FTP to do this, use _lastFtp if available
+  if (data.power && Array.isArray(data.power.zones) && data.power.zones.length >= 5) {
+    const ftp = window._lastFtp || 0;
+    if (ftp > 100) {
+      const pz = data.power.zones;
+      window._zoneConfig.power = pz.map(function(z, i) {
+        const col = ['#6b7db5','#4a9eff','#60c8f0','#f0a060','#f06060','#f030a0'][i] || '#f030a0';
+        const lbl = 'Z' + (i+1);
+        // max=-1 means "unlimited" (last zone)
+        const maxFrac = (z.max === -1 || z.max === null) ? 99 : z.max / ftp;
+        return { label:lbl, maxFrac, col, stravaMin:z.min, stravaMax:z.max };
+      });
+      // Update ZONE_POWER fractions used in buildSteppedProfile
+      window._zoneConfig.power.forEach(function(z, i) {
+        const key = 'Z'+(i+1);
+        const prev = window._zoneConfig.power[i-1];
+        const lo = prev ? prev.maxFrac : 0;
+        const hi = z.maxFrac === 99 ? 1.40 : z.maxFrac;
+        // Ceiling = midpoint between this zone's upper and next zone's upper
+        const ceil = Math.min(1.0, 0.15 + i * 0.17);
+        window._zoneConfig.powerCeil[key] = ceil;
+      });
+      console.log('✓ Power zones loaded from Strava:', window._zoneConfig.power.map(z=>z.label+' <'+Math.round(z.maxFrac*ftp)+'W').join(', '));
+    }
+  }
+
+  // HR zones — Strava gives absolute BPM values
+  if (data.heart_rate && Array.isArray(data.heart_rate.zones) && data.heart_rate.zones.length >= 4) {
+    const hz = data.heart_rate.zones;
+    // Find max HR from last zone's max (or 220-age default)
+    const maxHrBound = hz.reduce(function(m,z){ return (z.max>0&&z.max<300)?Math.max(m,z.max):m; }, 0) || 185;
+    window._zoneConfig.hr = hz.map(function(z,i) {
+      const col = ['#6b7db5','#4a9eff','#60c8f0','#f0a060','#f06060'][i] || '#f030a0';
+      return { label:'Z'+(i+1), maxFrac: (z.max===-1||z.max===null)?99:z.max/maxHrBound, col,
+               stravaMin:z.min, stravaMax:z.max, maxHrBound };
+    });
+    // Update HR_THRESHOLD used in TSS calculation
+    const lthrZone = window._zoneConfig.hr[3]; // Z4 lower = LTHR
+    if (lthrZone && lthrZone.stravaMin > 100) {
+      window._HR_THRESHOLD = lthrZone.stravaMin;
+    }
+    console.log('✓ HR zones loaded from Strava:', window._zoneConfig.hr.map(z=>z.label+' <'+Math.round(z.maxFrac*maxHrBound)+'bpm').join(', '));
+  }
+}
+
+// Zone lookup helpers — used everywhere in the dashboard
+// Returns zone label, colour, and ceiling fraction for a given power/HR value
+function getPowerZone(watts, ftp) {
+  const r = watts / (ftp || window._lastFtp || 200);
+  return window._zoneConfig.power.find(z => r < z.maxFrac) || window._zoneConfig.power[window._zoneConfig.power.length-1];
+}
+function getHRZone(hr, maxHR) {
+  const r = hr / (maxHR || 185);
+  return window._zoneConfig.hr.find(z => r < z.maxFrac) || window._zoneConfig.hr[window._zoneConfig.hr.length-1];
+}
+function getPowerZoneColour(watts, ftp) { return getPowerZone(watts, ftp).col; }
+
 async function loadAndRender(token) {
   document.getElementById('status-text').textContent = 'Loading activities...';
   const H     = { Authorization: 'Bearer ' + token };
   const after = Math.floor((Date.now() - 180*86400000) / 1000); // 180 days for CTL convergence
   const base  = 'https://www.strava.com/api/v3/athlete/activities?per_page=100&after=' + after;
 
-  const [athRes, actRes1] = await Promise.all([
+  const [athRes, actRes1, zonesRes] = await Promise.all([
     fetch('https://www.strava.com/api/v3/athlete', { headers: H }),
-    fetch(base + '&page=1', { headers: H })
+    fetch(base + '&page=1', { headers: H }),
+    fetch('https://www.strava.com/api/v3/athlete/zones', { headers: H }),
   ]);
 
   if (athRes.status === 401 || actRes1.status === 401) {
@@ -4629,6 +4748,15 @@ async function loadAndRender(token) {
 
   const athlete = await athRes.json();
   const page1   = await actRes1.json();
+
+  // Parse Strava zones — non-fatal if unavailable
+  try {
+    const zonesData = await zonesRes.json();
+    if (zonesData && (zonesData.power || zonesData.heart_rate)) {
+      window._stravaZones = zonesData;
+      applyStravaZones(zonesData);
+    }
+  } catch(e) { /* zones optional */ }
 
   if (!Array.isArray(page1)) {
     throw new Error(page1?.message || JSON.stringify(page1));
