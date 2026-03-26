@@ -1403,10 +1403,21 @@ function drawPowerProfile(session, canvas, mode) {
   const PAD_BOT = mode === 'card' ? 4  : 2;
   const drawH   = H - PAD_TOP - PAD_BOT;
 
-  // Helper: parse 'rgba(r,g,b,a)' → [r,g,b,a]
+  // Helper: parse colour string → [r,g,b,a] safely
   function parseRgba(s) {
-    const m = s.match(/[\d.]+/g);
-    return m ? [+m[0],+m[1],+m[2],+(m[3]??1)] : [128,128,128,0.85];
+    if (!s) return [128,128,128,0.85];
+    const m = String(s).match(/[\d.]+/g);
+    if (!m || m.length < 3) return [128,128,128,0.85];
+    const r = Math.round(parseFloat(m[0])||0);
+    const g = Math.round(parseFloat(m[1])||0);
+    const b = Math.round(parseFloat(m[2])||0);
+    const a = m[3] !== undefined ? parseFloat(m[3]) : 0.85;
+    return [
+      Math.max(0,Math.min(255,r)),
+      Math.max(0,Math.min(255,g)),
+      Math.max(0,Math.min(255,b)),
+      isNaN(a) ? 0.85 : Math.max(0,Math.min(1,a))
+    ];
   }
 
   segs.forEach(seg => {
