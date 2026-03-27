@@ -21,7 +21,8 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; }
-  #app { max-width: 920px; margin: 0 auto; padding: 2rem 1.5rem; }
+  #app { max-width: 920px; margin: 0 auto; padding: 2rem 1.5rem; overflow-x: hidden; }
+  body { overflow-x: hidden; }
   .header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 2.5rem; flex-wrap: wrap; gap: 1rem; }
   .header h1 { font-size: 1.6rem; font-weight: 300; letter-spacing: -0.02em; }
   .header h1 span { color: var(--accent); font-weight: 500; }
@@ -103,7 +104,7 @@
 
   /* ── Mobile / Touch Responsive ────────────────────────────────────────── */
   @media(max-width:760px){
-    #app { padding: 1.25rem 1rem; }
+    #app { padding: 1.25rem 0.875rem; overflow-x: hidden; }
     .header { margin-bottom: 1.5rem; }
     .header h1 { font-size: 1.3rem; }
     .status { margin-bottom: 1.25rem; }
@@ -123,7 +124,7 @@
 
 
   @media(max-width:500px){
-    #app { padding: 1rem 0.75rem; }
+    #app { padding: 0.875rem 0.75rem; overflow-x: hidden; }
     .header { gap: 0.5rem; margin-bottom: 1.25rem; }
     .header h1 { font-size: 1.15rem; }
     .athlete-name { display: none; } /* show avatar only, save space */
@@ -229,18 +230,16 @@
     }
   }
   /* ── Goal view mobile fixes ── */
+  #goal-view { max-width: 100%; box-sizing: border-box; }
   @media(max-width:600px){
     #goal-view { padding: 1rem !important; }
+    #goal-block { border-radius: 12px; }
     .readiness-3col { grid-template-columns: 1fr !important; }
-    .goal-card-right { flex-wrap: wrap !important; gap: 6px !important; }
-    .goal-card-right .goal-score-pill { order: -1; }
-    .goal-card-meta { font-size: 9px !important; }
     .peek-3col { grid-template-columns: 1fr 1fr !important; }
-    .readiness-advice { display: none; } /* hide long advice text on mobile */
+    .readiness-advice { display: none; }
   }
   @media(max-width:400px){
     .peek-3col { grid-template-columns: 1fr !important; }
-    .goal-card-right button { padding: 4px 6px !important; font-size: 9px !important; }
   }
 
   @supports(padding: env(safe-area-inset-bottom)){
@@ -2995,7 +2994,7 @@ function render(athlete, activities, metrics) {
     ══════════════════════════════════════════════════════════════════════════ -->
 
     <!-- Merged editable goal block -->
-    <div id="goal-block" style="background:linear-gradient(135deg,rgba(240,208,96,0.10),rgba(240,160,96,0.06));border:.5px solid rgba(240,208,96,0.4);border-radius:16px;margin-bottom:1.5rem;overflow:hidden;">
+    <div id="goal-block" style="background:linear-gradient(135deg,rgba(240,208,96,0.10),rgba(240,160,96,0.06));border:.5px solid rgba(240,208,96,0.4);border-radius:16px;margin-bottom:1.5rem;overflow:visible;">
 
       <!-- View mode -->
       <div id="goal-view" style="padding:1.25rem 1.5rem;">
