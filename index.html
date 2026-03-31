@@ -2508,7 +2508,7 @@ function buildPrescribedWorkoutContent(container,wod,todayDay){
 
 
 // ── Today's session power/HR chart ───────────────────────────────────────────
-// Fetches real Strava power+HR streams for the activity, computes 3s rolling
+// Fetches real Strava power+HR streams for the activity, computes 60s rolling
 // averages, and renders each reading as a bar reaching the zone ceiling.
 // Bar opacity reflects position within the zone (low→dim, high→bright).
 async function buildSessionChart(container, act, ftpW) {
@@ -2639,11 +2639,11 @@ async function buildSessionChart(container, act, ftpW) {
     } catch(e) { /* stream fetch failed — fall back to synthetic */ }
   }
 
-  // ── 3-second rolling average ──────────────────────────────────────────────
+  // ── 60-second rolling average — smooths noise into readable effort blocks ──
   function rolling3s(data) {
     if (!data || !data.length) return null;
     return data.map(function(_, i) {
-      const start = Math.max(0, i - 2);
+      const start = Math.max(0, i - 59); // 60s window
       let sum = 0, count = 0;
       for (let j = start; j <= i; j++) { sum += data[j] || 0; count++; }
       return Math.round(sum / count);
@@ -2667,10 +2667,10 @@ async function buildSessionChart(container, act, ftpW) {
   let powerData, hrData;
 
   if (powerStream) {
-    const raw3s = rolling3s(powerStream);
+    const raw3s = rolling3s(powerStream); // 60s avg
     powerData = downsample(raw3s, TARGET_PTS);
     if (hrStream) {
-      const hr3s = rolling3s(hrStream);
+      const hr3s = rolling3s(hrStream); // 60s avg
       hrData = downsample(hr3s, TARGET_PTS);
     }
   } else {
@@ -2912,7 +2912,7 @@ async function buildSessionChart(container, act, ftpW) {
     const ts=h>0?(h+'h '+(m<10?'0'+m:m)+'m'):tMins+'m';
     let html='<span style="color:'+pz.color+';font-weight:600">'+pz.label+' '+pz.name+'</span> · '+Math.round(powerData[i])+'W';
     if(showHR&&hrData&&hrData[i]){ const hzi=getHZI(hrData[i]); html+='<br><span style="color:'+HRZONES[hzi].color+'">'+HRZONES[hzi].label+'</span> · '+Math.round(hrData[i])+' bpm'; }
-    html+='<br><span style="color:rgba(107,107,128,0.9);font-size:10px;">'+ts+(powerStream?' · 3s avg':'· estimated')+'</span>';
+    html+='<br><span style="color:rgba(107,107,128,0.9);font-size:10px;">'+ts+(powerStream?' · 60s avg':' · estimated')+'</span>';
     tip.innerHTML=html;
     const tx=e.clientX-rect.left+14, ty=e.clientY-rect.top-12;
     tip.style.left=Math.min(tx,rect.width-195)+'px';
