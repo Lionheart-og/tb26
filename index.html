@@ -263,6 +263,9 @@
   .sc-leg-item { display:flex; align-items:center; gap:4px; font-family:var(--mono); font-size:10px; color:var(--muted); }
   .sc-leg-swatch { width:10px; height:10px; border-radius:2px; flex-shrink:0; }
   .sc-leg-line { width:18px; height:0; border-top:2px dashed rgba(255,255,255,0.7); flex-shrink:0; vertical-align:middle; }
+  .sc-elev-wrap { position:relative; width:100%; height:80px; margin-top:4px; }
+  .sc-elev-wrap canvas { position:absolute; top:0; left:0; width:100%; height:100%; }
+  .sc-elev-overlay { pointer-events:none; }
   .sc-tooltip { width:100%; background:#16161e; border:.5px solid rgba(255,255,255,0.10); border-radius:6px; padding:7px 12px; font-size:11px; color:var(--text); pointer-events:none; white-space:nowrap; display:none; line-height:1.5; font-family:var(--mono); margin-top:6px; box-sizing:border-box; }
 
 </style>
@@ -2620,11 +2623,11 @@ async function buildSessionChart(container, act, ftpW) {
 
   // ── Fetch real streams from Strava ──────────────────────────────────────
   const token = localStorage.getItem('strava_at') || localStorage.getItem('strava_token') || '';
-  let powerStream = null, hrStream = null, timeStream = null;
+  let powerStream = null, hrStream = null, timeStream = null, altStream = null;
 
   if (act.id && token) {
     try {
-      const keys = ['watts', 'heartrate', 'time'].join(',');
+      const keys = ['watts', 'heartrate', 'time', 'altitude'].join(',');
       const res = await fetch(
         'https://www.strava.com/api/v3/activities/' + act.id + '/streams?keys=' + keys + '&key_by_type=true',
         { headers: { Authorization: 'Bearer ' + token } }
@@ -2634,6 +2637,7 @@ async function buildSessionChart(container, act, ftpW) {
         powerStream = streams.watts     ? streams.watts.data     : null;
         hrStream    = streams.heartrate ? streams.heartrate.data : null;
         timeStream  = streams.time      ? streams.time.data      : null;
+        altStream   = streams.altitude  ? streams.altitude.data  : null;
       }
     } catch(e) { /* stream fetch failed — fall back to synthetic */ }
   }
@@ -2663,7 +2667,7 @@ async function buildSessionChart(container, act, ftpW) {
 
   const TARGET_PTS = 300; // one point per ~30s for a 2.5hr ride — smooth but fast
 
-  let powerData, hrData;
+  let powerData, hrData, altData;
 
   if (powerStream) {
     const raw3s = rolling3s(powerStream); // 60s avg
@@ -2671,6 +2675,16 @@ async function buildSessionChart(container, act, ftpW) {
     if (hrStream) {
       const hr3s = rolling3s(hrStream); // 60s avg
       hrData = downsample(hr3s, TARGET_PTS);
+    }
+    if (altStream) {
+      // Smooth altitude with a 30s rolling average to remove GPS noise
+      const altSmooth = altStream.map(function(_, i) {
+        const start = Math.max(0, i - 29);
+        let sum = 0, count = 0;
+        for (let j = start; j <= i; j++) { sum += altStream[j] || 0; count++; }
+        return sum / count;
+      });
+      altData = downsample(altSmooth, TARGET_PTS);
     }
   } else {
     // ── Fallback: deterministic synthetic data ──────────────────────────────
@@ -2714,6 +2728,15 @@ async function buildSessionChart(container, act, ftpW) {
     }
     powerData = genFallback(pAnchors,pSigma,0,0.70);
     hrData    = showHR ? genFallback(hAnchors,2,90,0.85) : [];
+    // Synthetic elevation — gentle rolling profile shaped around total_elevation_gain
+    const totalElev = act.total_elevation_gain || 300;
+    const baseElev = 800;
+    const aAnchors = [baseElev, baseElev+totalElev*0.15, baseElev+totalElev*0.35,
+      baseElev+totalElev*0.55, baseElev+totalElev*0.4, baseElev+totalElev*0.65,
+      baseElev+totalElev*0.8, baseElev+totalElev*0.6, baseElev+totalElev*0.9,
+      baseElev+totalElev*0.75, baseElev+totalElev*0.85, baseElev+totalElev*0.7,
+      baseElev+totalElev*0.5, baseElev+totalElev*0.3, baseElev];
+    altData = genFallback(aAnchors, 8, 0, 0.88);
   }
 
   const pts = powerData.length;
@@ -2731,6 +2754,16 @@ async function buildSessionChart(container, act, ftpW) {
   canvasWrap.appendChild(overC);
   wrap.appendChild(canvasWrap);
 
+  // Elevation chart — same x-axis, synced crosshair
+  const elevWrap = document.createElement('div');
+  elevWrap.className = 'sc-elev-wrap';
+  const elevC  = document.createElement('canvas');
+  const elevOC = document.createElement('canvas');
+  elevOC.className = 'sc-elev-overlay';
+  elevWrap.appendChild(elevC);
+  elevWrap.appendChild(elevOC);
+  if (altData && altData.length) wrap.appendChild(elevWrap);
+
   const tip = document.createElement('div');
   tip.className = 'sc-tooltip';
   wrap.appendChild(tip);
@@ -2746,6 +2779,11 @@ async function buildSessionChart(container, act, ftpW) {
     const dpr=window.devicePixelRatio||1, w=canvasWrap.clientWidth, h=canvasWrap.clientHeight;
     [mainC,overC].forEach(function(c){ c.width=w*dpr; c.height=h*dpr; });
     draw();
+    if (altData && altData.length) {
+      const eh = elevWrap.clientHeight;
+      [elevC,elevOC].forEach(function(c){ c.width=w*dpr; c.height=eh*dpr; });
+      drawElev();
+    }
   }
 
   function dims() {
@@ -2867,14 +2905,92 @@ async function buildSessionChart(container, act, ftpW) {
     }
   }
 
-  function drawOverlay(mouseX){
+  // ── Elevation chart draw functions ─────────────────────────────────────────
+  const ELEV_PAD = { l:50, r: showHR ? 58 : 14, t:8, b:18 };
+
+  function elevDims() {
+    return { W:elevC.width, H:elevC.height,
+             cw:elevC.width - ELEV_PAD.l - ELEV_PAD.r,
+             ch:elevC.height - ELEV_PAD.t - ELEV_PAD.b };
+  }
+
+  function drawElev() {
+    if (!altData || !altData.length) return;
+    const ctx = elevC.getContext('2d');
+    const { W, H, cw, ch } = elevDims();
+    ctx.clearRect(0,0,W,H);
+    const dpr = window.devicePixelRatio||1;
+
+    const minAlt = Math.min(...altData);
+    const maxAlt = Math.max(...altData);
+    const range  = Math.max(1, maxAlt - minAlt);
+    const baseY  = ELEV_PAD.t + ch;
+
+    function toEX(i) { return ELEV_PAD.l + (i/(altData.length-1))*cw; }
+    function toEY(v) { return ELEV_PAD.t + ch - ((v-minAlt)/range)*ch; }
+
+    // Filled area
+    ctx.beginPath();
+    ctx.moveTo(toEX(0), baseY);
+    for(let i=0;i<altData.length;i++) ctx.lineTo(toEX(i), toEY(altData[i]));
+    ctx.lineTo(toEX(altData.length-1), baseY);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, ELEV_PAD.t, 0, baseY);
+    grad.addColorStop(0,   'rgba(120,160,120,0.55)');
+    grad.addColorStop(1,   'rgba(60,90,60,0.15)');
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Profile line
+    ctx.beginPath();
+    for(let i=0;i<altData.length;i++){
+      const x=toEX(i), y=toEY(altData[i]);
+      i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+    }
+    ctx.strokeStyle='rgba(140,200,120,0.85)'; ctx.lineWidth=1.5;
+    ctx.lineJoin='round'; ctx.stroke();
+
+    // Left axis label + elevation range
+    ctx.font=(9*dpr)+'px var(--mono,monospace)';
+    ctx.fillStyle='rgba(120,180,100,0.7)'; ctx.textAlign='right';
+    ctx.fillText(Math.round(maxAlt)+'m', ELEV_PAD.l-5, ELEV_PAD.t+10);
+    ctx.fillText(Math.round(minAlt)+'m', ELEV_PAD.l-5, baseY-2);
+
+    // Section label
+    ctx.fillStyle='rgba(107,107,128,0.6)'; ctx.textAlign='left';
+    ctx.font='500 '+(8*dpr)+'px var(--mono,monospace)';
+    ctx.fillText('elevation', ELEV_PAD.l+4, ELEV_PAD.t+10);
+  }
+
+  function drawElevOverlay(idx) {
+    if (!altData || !altData.length) return;
+    const ctx = elevOC.getContext('2d');
+    const { W, H, cw, ch } = elevDims();
+    ctx.clearRect(0,0,W,H);
+    if (idx === null) return;
+    const minAlt = Math.min(...altData);
+    const maxAlt = Math.max(...altData);
+    const range  = Math.max(1, maxAlt-minAlt);
+    function toEX(i) { return ELEV_PAD.l + (i/(altData.length-1))*cw; }
+    function toEY(v) { return ELEV_PAD.t + ch - ((v-minAlt)/range)*ch; }
+    const x  = toEX(idx);
+    const ey = toEY(altData[idx]);
+    // Crosshair
+    ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(x,ELEV_PAD.t); ctx.lineTo(x,ELEV_PAD.t+ch); ctx.stroke();
+    ctx.setLineDash([]);
+    // Dot on elevation line
+    ctx.fillStyle='rgba(140,200,120,0.9)';
+    ctx.beginPath(); ctx.arc(x,ey,4,0,Math.PI*2); ctx.fill();
+  }
+
+  function drawOverlay(idx){
     const ctx=overC.getContext('2d');
     const {W,H,cw,ch}=dims();
     ctx.clearRect(0,0,W,H);
-    if(mouseX===null) return;
-    const i=Math.max(0,Math.min(pts-1,Math.round(((mouseX-PAD.l)/cw)*(pts-1))));
-    const x=toX(i,cw);
-    const zi=getPZI(powerData[i]);
+    if(idx===null) return;
+    const x=toX(idx,cw);
+    const zi=getPZI(powerData[idx]);
     const zCeilY=toYp(Math.min(PZONES[zi].max,CHART_MAX_P),ch);
     ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
     ctx.beginPath(); ctx.moveTo(x,PAD.t); ctx.lineTo(x,PAD.t+ch); ctx.stroke();
@@ -2882,47 +2998,64 @@ async function buildSessionChart(container, act, ftpW) {
     ctx.fillStyle=PZONES[zi].color;
     ctx.beginPath(); ctx.arc(x,zCeilY+2,4,0,Math.PI*2); ctx.fill();
     if(showHR && hrData && hrData.length){
-      const hy=toYh(hrData[i],ch);
+      const hy=toYh(hrData[idx],ch);
       ctx.fillStyle='rgba(255,255,255,0.90)';
       ctx.beginPath(); ctx.arc(x,hy,4,0,Math.PI*2); ctx.fill();
     }
   }
 
-  canvasWrap.addEventListener('mousemove',function(e){
-    const rect=canvasWrap.getBoundingClientRect();
-    const dpr=window.devicePixelRatio||1;
-    const mx=(e.clientX-rect.left)*dpr;
-    const {cw}=dims();
-    if(mx<PAD.l||mx>PAD.l+cw){ drawOverlay(null); tip.style.display='none'; return; }
-    drawOverlay(mx);
-    const i=Math.max(0,Math.min(pts-1,Math.round(((mx-PAD.l)/cw)*(pts-1))));
-    const pzi=getPZI(powerData[i]);
+  function updateHover(idx) {
+    drawOverlay(idx);
+    drawElevOverlay(idx);
+    if (idx === null) { tip.style.display='none'; return; }
+    const pzi=getPZI(powerData[idx]);
     const pz=PZONES[pzi];
-    const timeFrac=i/(pts-1);
+    const timeFrac=idx/(pts-1);
     const tMins=Math.round(timeFrac*totalMins);
     const h=Math.floor(tMins/60),m=tMins%60;
     const ts=h>0?(h+'h '+(m<10?'0'+m:m)+'m'):tMins+'m';
-    // Power row
     let html='<span style="color:'+pz.color+';font-weight:600">'+pz.label+' '+pz.name+'</span>'
       +'<span style="color:var(--muted)"> · </span>'
-      +'<span style="color:'+pz.color+'">'+Math.round(powerData[i])+'W</span>'
+      +'<span style="color:'+pz.color+'">'+Math.round(powerData[idx])+'W</span>'
       +'<span style="color:rgba(107,107,128,0.6);font-size:10px;"> 60s avg</span>';
-    // HR row
-    if(showHR&&hrData&&hrData[i]){
-      const hzi=getHZI(hrData[i]);
+    if(showHR&&hrData&&hrData[idx]){
+      const hzi=getHZI(hrData[idx]);
       html+='<span style="color:rgba(107,107,128,0.4);margin:0 8px;">|</span>'
         +'<span style="color:#ffffff">'+HRZONES[hzi].label+'</span>'
         +'<span style="color:var(--muted)"> · </span>'
-        +'<span style="color:#ffffff">'+Math.round(hrData[i])+' bpm</span>'
+        +'<span style="color:#ffffff">'+Math.round(hrData[idx])+' bpm</span>'
         +'<span style="color:rgba(107,107,128,0.6);font-size:10px;"> 3s avg</span>';
     }
-    // Time
+    if(altData&&altData[idx]){
+      html+='<span style="color:rgba(107,107,128,0.4);margin:0 8px;">|</span>'
+        +'<span style="color:rgba(140,200,120,0.9)">'+Math.round(altData[idx])+'m</span>'
+        +'<span style="color:rgba(107,107,128,0.6);font-size:10px;"> elev</span>';
+    }
     html+='<span style="color:rgba(107,107,128,0.4);margin:0 8px;">|</span>'
       +'<span style="color:rgba(107,107,128,0.8);">'+ts+'</span>';
     tip.innerHTML=html;
     tip.style.display='block';
-  });
-  canvasWrap.addEventListener('mouseleave',function(){ drawOverlay(null); tip.style.display='none'; });
+  }
+
+  function getIdxFromMouseX(mx) {
+    const {cw}=dims();
+    if(mx<PAD.l||mx>PAD.l+cw) return null;
+    return Math.max(0,Math.min(pts-1,Math.round(((mx-PAD.l)/cw)*(pts-1))));
+  }
+
+  function handleMove(e, sourceRect) {
+    const dpr=window.devicePixelRatio||1;
+    const mx=(e.clientX-sourceRect.left)*dpr;
+    const idx=getIdxFromMouseX(mx);
+    updateHover(idx);
+  }
+
+  canvasWrap.addEventListener('mousemove',function(e){ handleMove(e, canvasWrap.getBoundingClientRect()); });
+  canvasWrap.addEventListener('mouseleave',function(){ updateHover(null); });
+  if(altData&&altData.length){
+    elevWrap.addEventListener('mousemove',function(e){ handleMove(e, elevWrap.getBoundingClientRect()); });
+    elevWrap.addEventListener('mouseleave',function(){ updateHover(null); });
+  }
 
   requestAnimationFrame(function(){ requestAnimationFrame(function(){ resize(); }); });
   window.addEventListener('resize',resize);
