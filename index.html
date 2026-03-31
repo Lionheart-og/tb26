@@ -266,7 +266,7 @@
   .sc-elev-wrap { position:relative; width:100%; height:80px; margin-top:4px; }
   .sc-elev-wrap canvas { position:absolute; top:0; left:0; width:100%; height:100%; }
   .sc-elev-overlay { pointer-events:none; }
-  .sc-route-wrap { position:relative; width:100%; height:160px; margin-top:4px; background:rgba(0,0,0,0.15); border-radius:8px; overflow:hidden; }
+  .sc-route-wrap { position:relative; width:100%; height:360px; margin-top:4px; background:#1a1d22; border-radius:8px; overflow:hidden; }
   .sc-route-wrap canvas { position:absolute; top:0; left:0; width:100%; height:100%; }
   .sc-tooltip { width:100%; background:#16161e; border:.5px solid rgba(255,255,255,0.10); border-radius:6px; padding:7px 12px; font-size:11px; color:var(--text); pointer-events:none; white-space:nowrap; display:none; line-height:1.5; font-family:var(--mono); margin-top:6px; box-sizing:border-box; }
 
@@ -3008,68 +3008,150 @@ async function buildSessionChart(container, act, ftpW, isOutdoor) {
   }
 
   // ── Route map draw functions ──────────────────────────────────────────────
+  // OSM tile helpers
+  function latLngToTile(lat, lng, z) {
+    const n = Math.pow(2, z);
+    const x = Math.floor((lng + 180) / 360 * n);
+    const latRad = lat * Math.PI / 180;
+    const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1/Math.cos(latRad)) / Math.PI) / 2 * n);
+    return { x, y };
+  }
+  function tileToPixel(tileX, tileY, originTileX, originTileY, tileSize) {
+    return {
+      px: (tileX - originTileX) * tileSize,
+      py: (tileY - originTileY) * tileSize
+    };
+  }
+  function latLngToPixel(lat, lng, z, originTileX, originTileY, tileSize) {
+    const n = Math.pow(2, z);
+    const px = (lng + 180) / 360 * n * tileSize - originTileX * tileSize;
+    const latRad = lat * Math.PI / 180;
+    const py = (1 - Math.log(Math.tan(latRad) + 1/Math.cos(latRad)) / Math.PI) / 2 * n * tileSize - originTileY * tileSize;
+    return { px, py };
+  }
+
   function drawRoute() {
     if (!latlngData || !latlngData.length) return;
     const ctx = routeC.getContext('2d');
     const W = routeC.width, H = routeC.height;
-    ctx.clearRect(0,0,W,H);
-    const dpr = window.devicePixelRatio||1;
+    ctx.clearRect(0, 0, W, H);
+    const dpr = window.devicePixelRatio || 1;
 
     const lats = latlngData.map(function(p){ return p[0]; });
     const lngs = latlngData.map(function(p){ return p[1]; });
-    const minLat=Math.min(...lats), maxLat=Math.max(...lats);
-    const minLng=Math.min(...lngs), maxLng=Math.max(...lngs);
-    const spanLat=Math.max(0.0001,maxLat-minLat);
-    const spanLng=Math.max(0.0001,maxLng-minLng);
+    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+    const cLat = (minLat + maxLat) / 2;
+    const cLng = (minLng + maxLng) / 2;
 
-    const RPAD = 28*dpr;
-    const drawW = W-RPAD*2, drawH = H-RPAD*2;
-    // Preserve aspect ratio
-    const scaleX = drawW/spanLng, scaleY = drawH/spanLat;
-    const scale  = Math.min(scaleX,scaleY);
-    const offX   = RPAD + (drawW - spanLng*scale)/2;
-    const offY   = RPAD + (drawH - spanLat*scale)/2;
+    // Pick zoom level so route fits with ~15% padding
+    const TILE_SIZE = 256;
+    let zoom = 14;
+    for (let z = 15; z >= 8; z--) {
+      const n = Math.pow(2, z);
+      const pxSpanLng = (maxLng - minLng) / 360 * n * TILE_SIZE;
+      const latRad1 = minLat * Math.PI / 180;
+      const latRad2 = maxLat * Math.PI / 180;
+      const pxSpanLat = Math.abs(
+        (1 - Math.log(Math.tan(latRad2) + 1/Math.cos(latRad2)) / Math.PI) / 2 * n * TILE_SIZE -
+        (1 - Math.log(Math.tan(latRad1) + 1/Math.cos(latRad1)) / Math.PI) / 2 * n * TILE_SIZE
+      );
+      if (pxSpanLng < W * 0.72 && pxSpanLat < H * 0.72) { zoom = z; break; }
+    }
 
-    function toRX(lng){ return offX + (lng-minLng)*scale; }
-    function toRY(lat){ return offY + (maxLat-lat)*scale; }  // lat flipped (N=up)
+    const originTile = latLngToTile(maxLat, minLng, zoom);
+    const endTile    = latLngToTile(minLat, maxLng, zoom);
 
-    // Background subtle grid hint
-    ctx.fillStyle='rgba(255,255,255,0.015)';
-    ctx.fillRect(RPAD,RPAD,drawW,drawH);
+    // Centre offset so route sits in middle of canvas
+    const routePixStart = latLngToPixel(maxLat, minLng, zoom, originTile.x, originTile.y, TILE_SIZE);
+    const routePixEnd   = latLngToPixel(minLat, maxLng, zoom, originTile.x, originTile.y, TILE_SIZE);
+    const routePixW = routePixEnd.px - routePixStart.px;
+    const routePixH = routePixEnd.py - routePixStart.py;
+    const offsetX = (W - routePixW) / 2 - routePixStart.px;
+    const offsetY = (H - routePixH) / 2 - routePixStart.py;
 
-    // Draw route segments coloured by power zone
-    ctx.lineWidth=2.5; ctx.lineJoin='round'; ctx.lineCap='round';
-    for(let i=0;i<latlngData.length-1;i++){
-      const zi=getPZI(powerData[i]||0);
-      ctx.strokeStyle=PZONES[zi].color+'d8';
+    // Draw OSM dark tiles (Stadia Alidade Smooth Dark — no key needed for low usage)
+    const tilePromises = [];
+    for (let tx = originTile.x - 1; tx <= endTile.x + 1; tx++) {
+      for (let ty = originTile.y - 1; ty <= endTile.y + 1; ty++) {
+        (function(tx, ty) {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          const tileUrl = 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/' + zoom + '/' + tx + '/' + ty + '.png';
+          const p = new Promise(function(resolve) {
+            img.onload = function() {
+              const px = tx * TILE_SIZE - originTile.x * TILE_SIZE + offsetX;
+              const py = ty * TILE_SIZE - originTile.y * TILE_SIZE + offsetY;
+              ctx.drawImage(img, Math.round(px), Math.round(py), TILE_SIZE, TILE_SIZE);
+              resolve();
+            };
+            img.onerror = function() { resolve(); };
+          });
+          img.src = tileUrl;
+          tilePromises.push(p);
+        })(tx, ty);
+      }
+    }
+
+    // Once tiles loaded (or failed), draw route on top
+    Promise.all(tilePromises).then(function() {
+      drawRouteTrack(ctx, W, H, dpr, zoom, originTile, TILE_SIZE, offsetX, offsetY);
+    });
+
+    // Also draw route immediately (in case tiles are cached / instant)
+    drawRouteTrack(ctx, W, H, dpr, zoom, originTile, TILE_SIZE, offsetX, offsetY);
+  }
+
+  function drawRouteTrack(ctx, W, H, dpr, zoom, originTile, TILE_SIZE, offsetX, offsetY) {
+    function toRX(lng) {
+      const n = Math.pow(2, zoom);
+      return (lng + 180) / 360 * n * TILE_SIZE - originTile.x * TILE_SIZE + offsetX;
+    }
+    function toRY(lat) {
+      const n = Math.pow(2, zoom);
+      const latRad = lat * Math.PI / 180;
+      return (1 - Math.log(Math.tan(latRad) + 1/Math.cos(latRad)) / Math.PI) / 2 * n * TILE_SIZE - originTile.y * TILE_SIZE + offsetY;
+    }
+
+    // Route shadow for legibility over map
+    ctx.lineWidth = 5; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.beginPath();
+    latlngData.forEach(function(pt, i) {
+      i === 0 ? ctx.moveTo(toRX(pt[1]), toRY(pt[0])) : ctx.lineTo(toRX(pt[1]), toRY(pt[0]));
+    });
+    ctx.stroke();
+
+    // Route coloured by power zone
+    ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    for (let i = 0; i < latlngData.length - 1; i++) {
+      const zi = getPZI(powerData[i] || 0);
+      ctx.strokeStyle = PZONES[zi].color + 'ee';
       ctx.beginPath();
-      ctx.moveTo(toRX(latlngData[i][1]),   toRY(latlngData[i][0]));
-      ctx.lineTo(toRX(latlngData[i+1][1]), toRY(latlngData[i+1][0]));
+      ctx.moveTo(toRX(latlngData[i][1]),     toRY(latlngData[i][0]));
+      ctx.lineTo(toRX(latlngData[i+1][1]),   toRY(latlngData[i+1][0]));
       ctx.stroke();
     }
 
-    // Start dot (green)
-    const sx=toRX(latlngData[0][1]), sy=toRY(latlngData[0][0]);
-    ctx.fillStyle='#60d090';
-    ctx.beginPath(); ctx.arc(sx,sy,5,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='rgba(0,0,0,0.6)';
-    ctx.beginPath(); ctx.arc(sx,sy,3,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#60d090';
-    ctx.beginPath(); ctx.arc(sx,sy,2,0,Math.PI*2); ctx.fill();
+    // Start dot
+    const sx = toRX(latlngData[0][1]), sy = toRY(latlngData[0][0]);
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.beginPath(); ctx.arc(sx, sy, 7, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#60d090';         ctx.beginPath(); ctx.arc(sx, sy, 5, 0, Math.PI*2); ctx.fill();
 
-    // End dot (red)
-    const ex=toRX(latlngData[latlngData.length-1][1]), ey=toRY(latlngData[latlngData.length-1][0]);
-    ctx.fillStyle='#f06060';
-    ctx.beginPath(); ctx.arc(ex,ey,5,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='rgba(0,0,0,0.6)';
-    ctx.beginPath(); ctx.arc(ex,ey,3,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#f06060';
-    ctx.beginPath(); ctx.arc(ex,ey,2,0,Math.PI*2); ctx.fill();
+    // End dot
+    const ex = toRX(latlngData[latlngData.length-1][1]), ey = toRY(latlngData[latlngData.length-1][0]);
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.beginPath(); ctx.arc(ex, ey, 7, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#f06060';          ctx.beginPath(); ctx.arc(ex, ey, 5, 0, Math.PI*2); ctx.fill();
 
-    // Label
-    ctx.font='500 '+(8*dpr)+'px var(--mono,monospace)';
-    ctx.fillStyle='rgba(107,107,128,0.6)'; ctx.textAlign='left';
-    ctx.fillText('route · power zones', RPAD+4, RPAD+10);
+    // Attribution (OSM requirement)
+    ctx.font = (9*dpr)+'px sans-serif';
+    ctx.fillStyle = 'rgba(180,180,180,0.55)'; ctx.textAlign = 'right';
+    ctx.fillText('© OpenStreetMap contributors · Stadia Maps', W - 6, H - 6);
+
+    // Route label
+    ctx.font = '500 '+(9*dpr)+'px var(--mono,monospace)';
+    ctx.fillStyle = 'rgba(200,200,220,0.55)'; ctx.textAlign = 'left';
+    ctx.fillText('route · power zones', 10, 18*dpr);
   }
 
   function drawRouteOverlay(idx) {
@@ -3080,32 +3162,54 @@ async function buildSessionChart(container, act, ftpW, isOutdoor) {
     if (idx === null) return;
     const dpr = window.devicePixelRatio||1;
 
+    // Recompute same projection as drawRoute
     const lats = latlngData.map(function(p){ return p[0]; });
     const lngs = latlngData.map(function(p){ return p[1]; });
     const minLat=Math.min(...lats), maxLat=Math.max(...lats);
     const minLng=Math.min(...lngs), maxLng=Math.max(...lngs);
-    const spanLat=Math.max(0.0001,maxLat-minLat);
-    const spanLng=Math.max(0.0001,maxLng-minLng);
-    const RPAD=28*dpr, drawW=W-RPAD*2, drawH=H-RPAD*2;
-    const scaleX=drawW/spanLng, scaleY=drawH/spanLat, scale=Math.min(scaleX,scaleY);
-    const offX=RPAD+(drawW-spanLng*scale)/2, offY=RPAD+(drawH-spanLat*scale)/2;
-    function toRX(lng){ return offX+(lng-minLng)*scale; }
-    function toRY(lat){ return offY+(maxLat-lat)*scale; }
+    const TILE_SIZE = 256;
+    let zoom = 14;
+    for (let z = 15; z >= 8; z--) {
+      const n = Math.pow(2, z);
+      const pxSpanLng = (maxLng-minLng)/360*n*TILE_SIZE;
+      const latRad1=minLat*Math.PI/180, latRad2=maxLat*Math.PI/180;
+      const pxSpanLat = Math.abs((1-Math.log(Math.tan(latRad2)+1/Math.cos(latRad2))/Math.PI)/2*n*TILE_SIZE-(1-Math.log(Math.tan(latRad1)+1/Math.cos(latRad1))/Math.PI)/2*n*TILE_SIZE);
+      if (pxSpanLng < W*0.72 && pxSpanLat < H*0.72) { zoom=z; break; }
+    }
+    const originTile = latLngToTile(maxLat, minLng, zoom);
+    const endTile    = latLngToTile(minLat, maxLng, zoom);
+    const routePixStart = latLngToPixel(maxLat, minLng, zoom, originTile.x, originTile.y, TILE_SIZE);
+    const routePixEnd   = latLngToPixel(minLat, maxLng, zoom, originTile.x, originTile.y, TILE_SIZE);
+    const routePixW = routePixEnd.px - routePixStart.px;
+    const routePixH = routePixEnd.py - routePixStart.py;
+    const offsetX = (W - routePixW) / 2 - routePixStart.px;
+    const offsetY = (H - routePixH) / 2 - routePixStart.py;
 
-    const safeIdx = Math.max(0,Math.min(latlngData.length-1,idx));
+    function toRX(lng) {
+      const n = Math.pow(2, zoom);
+      return (lng+180)/360*n*TILE_SIZE - originTile.x*TILE_SIZE + offsetX;
+    }
+    function toRY(lat) {
+      const n = Math.pow(2, zoom);
+      const latRad = lat*Math.PI/180;
+      return (1-Math.log(Math.tan(latRad)+1/Math.cos(latRad))/Math.PI)/2*n*TILE_SIZE - originTile.y*TILE_SIZE + offsetY;
+    }
+
+    const safeIdx = Math.max(0, Math.min(latlngData.length-1, idx));
     const px = toRX(latlngData[safeIdx][1]);
     const py = toRY(latlngData[safeIdx][0]);
-    const zi  = getPZI(powerData[safeIdx]||0);
+    const zi = getPZI(powerData[safeIdx]||0);
 
-    // Pulsing ring
-    ctx.strokeStyle=PZONES[zi].color;
-    ctx.lineWidth=1.5;
-    ctx.beginPath(); ctx.arc(px,py,8,0,Math.PI*2); ctx.stroke();
-    // Filled dot
-    ctx.fillStyle='rgba(255,255,255,0.95)';
-    ctx.beginPath(); ctx.arc(px,py,4,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle=PZONES[zi].color;
-    ctx.beginPath(); ctx.arc(px,py,2.5,0,Math.PI*2); ctx.fill();
+    // Outer ring
+    ctx.strokeStyle = PZONES[zi].color;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(px, py, 10, 0, Math.PI*2); ctx.stroke();
+    // White fill
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI*2); ctx.fill();
+    // Zone colour centre
+    ctx.fillStyle = PZONES[zi].color;
+    ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI*2); ctx.fill();
   }
 
   function drawOverlay(idx){
