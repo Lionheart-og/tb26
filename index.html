@@ -2577,11 +2577,59 @@ function buildSessionChart(container, act, ftpW) {
   }
 
   // Shape power anchors around avg — mostly Z1/Z2 with a few spikes
-  const pLo = Math.max(0, avgP * 0.55), pHi = Math.min(MAX_P - 10, avgP * 1.65);
-  const pAnchors = [pLo, avgP, avgP*1.05, pHi, avgP, pHi*0.95, avgP*1.02, avgP*0.97, pHi, avgP, avgP*1.05, avgP*0.95, avgP*1.02, avgP*1.04, avgP];
-  const hLoA = Math.max(MIN_H+5, avgHR*0.88), hHiA = Math.min(MAX_H-5, maxHR*0.97);
-  const hAnchors = [hLoA, avgHR*0.93, avgHR, hHiA*0.97, avgHR*1.02, hHiA, avgHR*1.04, avgHR, hHiA*0.98, avgHR*1.02, avgHR, avgHR*0.97, avgHR, avgHR*1.02, avgHR*0.97];
-  const powerData = gen(pAnchors, 14, 0);
+  // Power curve anchors — shaped around avg AND max watts so surges are realistic.
+  // max_watts from Strava reflects actual peak; we place 2-3 surge windows using it.
+  const maxP = act.max_watts ? Math.min(act.max_watts, MAX_P) : Math.round(avgP * 2.2);
+  // Surge amplitude: use actual max but cap spikes per-anchor at a believable fraction
+  // (you won't sustain max for a whole 10-min anchor, but you'll hit it briefly).
+  // Surge windows sit at ~20%, ~38%, and ~75% of ride — typical attack/climb positions.
+  const surgeHi  = Math.min(maxP * 0.75, MAX_P - 10);   // sustained surge (~75% of max)
+  const surgeMid = Math.min(maxP * 0.55, MAX_P - 10);    // moderate push
+  const pBase    = Math.max(0, avgP * 0.62);              // easy/recovery baseline
+
+  // 15 anchors across ride timeline (index 0 = start, 14 = end)
+  // Positions: [0]start [1-2]warmup [3]surge1 [4]settle [5]surge2 [6-7]endurance
+  //            [8]surge3 [9-10]endurance [11-12]fade [13-14]cooldown
+  const pAnchors = [
+    pBase,          // 0%  — start easy
+    avgP * 0.80,    // 7%  — warming up
+    avgP * 0.95,    // 14% — settling in
+    surgeHi,        // 21% — surge window (~25min on a 2h30 ride)
+    avgP * 0.90,    // 29% — recover after surge
+    surgeMid,       // 36% — secondary push (~53min)
+    avgP * 0.92,    // 43% — endurance block
+    avgP * 0.95,    // 50% — mid-ride steady
+    surgeHi * 0.88, // 57% — third effort
+    avgP * 0.93,    // 64% — backing off
+    avgP * 0.90,    // 71% — late endurance
+    avgP * 0.88,    // 79% — starting to fade
+    avgP * 0.80,    // 86% — fatigue setting in
+    avgP * 0.68,    // 93% — cooldown
+    pBase * 0.85,   // 100% — end
+  ];
+
+  // Reduced sigma (noise) so individual bars don't randomly cross zone lines,
+  // but keep enough variation for a natural-looking trace.
+  const pSigma = Math.max(6, avgP * 0.06);
+
+  // HR anchors — shaped around avg and max HR
+  const hLoA = Math.max(MIN_H+5, avgHR*0.88), hHiA = Math.min(MAX_H-5, maxHR*0.96);
+  const hAnchors = [hLoA, avgHR*0.92, avgHR, hHiA*0.97, avgHR*1.02, hHiA, avgHR*1.03, avgHR, hHiA*0.97, avgHR*1.02, avgHR, avgHR*0.97, avgHR, avgHR*1.01, avgHR*0.96];
+
+  // Lower EWMA smoothing (0.70 instead of 0.85) so surge anchors actually
+  // show up as distinct peaks rather than being ironed flat.
+  function genPower(anchors, sigma, lo) {
+    const out = []; let v = anchors[0];
+    for(let i=0;i<pts;i++){
+      const t=i/totalMins; let tgt=0,tw=0;
+      anchors.forEach(function(a,j){ const w=Math.exp(-0.5*Math.pow((t-j/(anchors.length-1))/0.15,2)); tgt+=a*w; tw+=w; });
+      tgt/=tw; v=v*0.70+tgt*0.30+(seededRand()-0.5)*sigma;
+      out.push(Math.max(lo,v));
+    }
+    return out;
+  }
+
+  const powerData = genPower(pAnchors, pSigma, 0);
   const hrData    = showHR ? gen(hAnchors, 2, 90) : [];
 
   // Build DOM
