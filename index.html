@@ -2508,9 +2508,11 @@ function buildPrescribedWorkoutContent(container,wod,todayDay){
 
 
 // ── Today's session power/HR chart ───────────────────────────────────────────
-// Renders a Strava/Coggan 7-zone power chart with HR overlay on a secondary axis.
-// Uses synthetic data shaped around real activity averages when raw streams are unavailable.
-function buildSessionChart(container, act, ftpW) {
+// Fetches real Strava power+HR streams for the activity, computes 3s rolling
+// averages, and renders each reading as a bar reaching the zone ceiling.
+// Bar opacity reflects position within the zone (low→dim, high→bright).
+async function buildSessionChart(container, act, ftpW) {
+
   // Shared colour palette (Z1–Z5 power = HR Z1–Z5)
   const C = ['#5090d8','#50c8a0','#d4b840','#e07030','#d03060'];
 
@@ -2522,10 +2524,9 @@ function buildSessionChart(container, act, ftpW) {
     { label:'Z4', name:'Threshold',       min:230, max:269, color:C[3] },
     { label:'Z5', name:'VO₂ Max',         min:269, max:306, color:C[4] },
     { label:'Z6', name:'Anaerobic',       min:306, max:341, color:'#9040c8' },
-    { label:'Z7', name:'Neuromuscular',   min:341, max:380, color:'#c04080' },
+    { label:'Z7', name:'Neuromuscular',   min:341, max:900, color:'#c04080' },
   ];
-  const MAX_P = 380, MIN_P = 0;
-  const AVG_P = act.average_watts ? Math.round(act.average_watts) : 148;
+  const MAX_P = 900, MIN_P = 0;
 
   // HR zones — user's Strava values
   const HRZONES = [
@@ -2536,117 +2537,41 @@ function buildSessionChart(container, act, ftpW) {
     { label:'HR Z5', min:194, max:220, color:C[4] },
   ];
   const MIN_H = 90, MAX_H = 210;
+
+  const AVG_P = act.average_watts ? Math.round(act.average_watts) : 148;
   const showHR = !!(act.average_heartrate);
 
   function getPZI(w) { for(let i=0;i<PZONES.length;i++) if(w<=PZONES[i].max) return i; return PZONES.length-1; }
   function getHZI(h) { for(let i=0;i<HRZONES.length;i++) if(h<=HRZONES[i].max) return i; return HRZONES.length-1; }
-  function hex2rgba(hex,a){ const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16); return 'rgba('+r+','+g+','+b+','+a+')'; }
 
-  // Synthetic session data shaped around real activity metrics
-  const totalMins = act.moving_time ? Math.round(act.moving_time/60) : 149;
-  const pts = totalMins + 1;
-  const avgP = AVG_P, avgHR = act.average_heartrate ? Math.round(act.average_heartrate) : 126;
-  const maxHR = act.max_heartrate ? Math.round(act.max_heartrate) : Math.round(avgHR * 1.12);
-
-  // Deterministic PRNG (mulberry32) seeded from activity ID + date so the
-  // curve is identical on every render for the same activity — no zone flicker.
-  const seed = (function() {
-    const s = String(act.id || '') + String(act.start_date || '') + String(act.moving_time || '');
-    let h = 0;
-    for (let i = 0; i < s.length; i++) { h = Math.imul(31, h) + s.charCodeAt(i) | 0; }
-    return h >>> 0;
-  })();
-  let _rng = seed || 0xdeadbeef;
-  function seededRand() {
-    _rng += 0x6d2b79f5;
-    let t = _rng;
-    t = Math.imul(t ^ t >>> 15, t | 1);
-    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  // Intra-zone brightness: 0=bottom of zone, 1=top of zone
+  function zoneBrightness(w) {
+    const zi = getPZI(w);
+    const z  = PZONES[zi];
+    const span = z.max - z.min;
+    if (span <= 0) return 1;
+    return Math.max(0, Math.min(1, (w - z.min) / span));
   }
 
-  function gen(anchors, sigma, lo) {
-    const out = []; let v = anchors[0];
-    for(let i=0;i<pts;i++){
-      const t=i/totalMins; let tgt=0,tw=0;
-      anchors.forEach(function(a,j){ const w=Math.exp(-0.5*Math.pow((t-j/(anchors.length-1))/0.18,2)); tgt+=a*w; tw+=w; });
-      tgt/=tw; v=v*0.85+tgt*0.15+(seededRand()-0.5)*sigma;
-      out.push(Math.max(lo,v));
-    }
-    return out;
+  // Parse hex colour to r,g,b
+  function hexRGB(hex) {
+    const h = hex.replace('#','');
+    return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
   }
 
-  // Shape power anchors around avg — mostly Z1/Z2 with a few spikes
-  // Power curve anchors — shaped around avg AND max watts so surges are realistic.
-  // max_watts from Strava reflects actual peak; we place 2-3 surge windows using it.
-  const maxP = act.max_watts ? Math.min(act.max_watts, MAX_P) : Math.round(avgP * 2.2);
-  // Surge amplitude: use actual max but cap spikes per-anchor at a believable fraction
-  // (you won't sustain max for a whole 10-min anchor, but you'll hit it briefly).
-  // Surge windows sit at ~20%, ~38%, and ~75% of ride — typical attack/climb positions.
-  const surgeHi  = Math.min(maxP * 0.75, MAX_P - 10);   // sustained surge (~75% of max)
-  const surgeMid = Math.min(maxP * 0.55, MAX_P - 10);    // moderate push
-  const pBase    = Math.max(0, avgP * 0.62);              // easy/recovery baseline
-
-  // 15 anchors across ride timeline (index 0 = start, 14 = end)
-  // Positions: [0]start [1-2]warmup [3]surge1 [4]settle [5]surge2 [6-7]endurance
-  //            [8]surge3 [9-10]endurance [11-12]fade [13-14]cooldown
-  const pAnchors = [
-    pBase,          // 0%  — start easy
-    avgP * 0.80,    // 7%  — warming up
-    avgP * 0.95,    // 14% — settling in
-    surgeHi,        // 21% — surge window (~25min on a 2h30 ride)
-    avgP * 0.90,    // 29% — recover after surge
-    surgeMid,       // 36% — secondary push (~53min)
-    avgP * 0.92,    // 43% — endurance block
-    avgP * 0.95,    // 50% — mid-ride steady
-    surgeHi * 0.88, // 57% — third effort
-    avgP * 0.93,    // 64% — backing off
-    avgP * 0.90,    // 71% — late endurance
-    avgP * 0.88,    // 79% — starting to fade
-    avgP * 0.80,    // 86% — fatigue setting in
-    avgP * 0.68,    // 93% — cooldown
-    pBase * 0.85,   // 100% — end
-  ];
-
-  // Reduced sigma (noise) so individual bars don't randomly cross zone lines,
-  // but keep enough variation for a natural-looking trace.
-  const pSigma = Math.max(6, avgP * 0.06);
-
-  // HR anchors — shaped around avg and max HR
-  const hLoA = Math.max(MIN_H+5, avgHR*0.88), hHiA = Math.min(MAX_H-5, maxHR*0.96);
-  const hAnchors = [hLoA, avgHR*0.92, avgHR, hHiA*0.97, avgHR*1.02, hHiA, avgHR*1.03, avgHR, hHiA*0.97, avgHR*1.02, avgHR, avgHR*0.97, avgHR, avgHR*1.01, avgHR*0.96];
-
-  // Lower EWMA smoothing (0.70 instead of 0.85) so surge anchors actually
-  // show up as distinct peaks rather than being ironed flat.
-  function genPower(anchors, sigma, lo) {
-    const out = []; let v = anchors[0];
-    for(let i=0;i<pts;i++){
-      const t=i/totalMins; let tgt=0,tw=0;
-      anchors.forEach(function(a,j){ const w=Math.exp(-0.5*Math.pow((t-j/(anchors.length-1))/0.15,2)); tgt+=a*w; tw+=w; });
-      tgt/=tw; v=v*0.70+tgt*0.30+(seededRand()-0.5)*sigma;
-      out.push(Math.max(lo,v));
-    }
-    return out;
-  }
-
-  const powerData = genPower(pAnchors, pSigma, 0);
-  const hrData    = showHR ? gen(hAnchors, 2, 90) : [];
-
-  // Build DOM
+  // Build DOM scaffold immediately so the section appears while streams load
   const wrap = document.createElement('div');
   wrap.className = 'sc-wrap';
 
-  // Section label
   const lbl = document.createElement('div');
   lbl.style.cssText = 'font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;';
   lbl.textContent = "Today's session — power zones & heart rate";
   wrap.appendChild(lbl);
 
-  // Legend — power left, HR right, separated
+  // Legend — power left, HR right
   const legWrap = document.createElement('div');
   legWrap.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;flex-wrap:wrap;';
 
-  // Power legend (left)
   const pLegGrp = document.createElement('div');
   pLegGrp.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;align-items:center;';
   const pLegLabel = document.createElement('span');
@@ -2661,16 +2586,13 @@ function buildSessionChart(container, act, ftpW) {
   });
   legWrap.appendChild(pLegGrp);
 
-  // HR legend (right)
   if (showHR) {
     const hLegGrp = document.createElement('div');
     hLegGrp.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;align-items:center;';
-    // Avg power line entry
     const avgLeg = document.createElement('div');
     avgLeg.style.cssText = 'display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--muted);margin-right:4px;';
     avgLeg.innerHTML = '<span style="display:inline-block;width:18px;height:0;border-top:2px dashed rgba(255,255,255,0.75);"></span>'+AVG_P+'W avg';
     hLegGrp.appendChild(avgLeg);
-    // Separator pipe
     const sep = document.createElement('span');
     sep.style.cssText = 'color:rgba(255,255,255,0.12);font-size:14px;margin:0 2px;user-select:none;';
     sep.textContent = '|';
@@ -2689,28 +2611,141 @@ function buildSessionChart(container, act, ftpW) {
   }
   wrap.appendChild(legWrap);
 
-  // Canvas container
+  // Loading state
+  const loadingEl = document.createElement('div');
+  loadingEl.style.cssText = 'height:360px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;color:var(--muted);background:rgba(0,0,0,0.15);border-radius:8px;';
+  loadingEl.textContent = 'Loading power stream…';
+  wrap.appendChild(loadingEl);
+
+  container.appendChild(wrap);
+
+  // ── Fetch real streams from Strava ──────────────────────────────────────
+  const token = localStorage.getItem('strava_at') || localStorage.getItem('strava_token') || '';
+  let powerStream = null, hrStream = null, timeStream = null;
+
+  if (act.id && token) {
+    try {
+      const keys = ['watts', 'heartrate', 'time'].join(',');
+      const res = await fetch(
+        'https://www.strava.com/api/v3/activities/' + act.id + '/streams?keys=' + keys + '&key_by_type=true',
+        { headers: { Authorization: 'Bearer ' + token } }
+      );
+      if (res.ok) {
+        const streams = await res.json();
+        powerStream = streams.watts     ? streams.watts.data     : null;
+        hrStream    = streams.heartrate ? streams.heartrate.data : null;
+        timeStream  = streams.time      ? streams.time.data      : null;
+      }
+    } catch(e) { /* stream fetch failed — fall back to synthetic */ }
+  }
+
+  // ── 3-second rolling average ──────────────────────────────────────────────
+  function rolling3s(data) {
+    if (!data || !data.length) return null;
+    return data.map(function(_, i) {
+      const start = Math.max(0, i - 2);
+      let sum = 0, count = 0;
+      for (let j = start; j <= i; j++) { sum += data[j] || 0; count++; }
+      return Math.round(sum / count);
+    });
+  }
+
+  // Downsample to at most `target` evenly-spaced points (keeps chart fast)
+  function downsample(data, target) {
+    if (!data || data.length <= target) return data;
+    const step = data.length / target;
+    const out = [];
+    for (let i = 0; i < target; i++) {
+      const idx = Math.min(data.length - 1, Math.round(i * step));
+      out.push(data[idx]);
+    }
+    return out;
+  }
+
+  const TARGET_PTS = 300; // one point per ~30s for a 2.5hr ride — smooth but fast
+
+  let powerData, hrData;
+
+  if (powerStream) {
+    const raw3s = rolling3s(powerStream);
+    powerData = downsample(raw3s, TARGET_PTS);
+    if (hrStream) {
+      const hr3s = rolling3s(hrStream);
+      hrData = downsample(hr3s, TARGET_PTS);
+    }
+  } else {
+    // ── Fallback: deterministic synthetic data ──────────────────────────────
+    const totalMins = act.moving_time ? Math.round(act.moving_time/60) : 149;
+    const pts = Math.min(TARGET_PTS, totalMins + 1);
+    const avgP2 = AVG_P;
+    const maxP2 = act.max_watts ? Math.min(act.max_watts, 700) : Math.round(avgP2 * 2.2);
+    const avgHR2 = act.average_heartrate ? Math.round(act.average_heartrate) : 126;
+    const maxHR2 = act.max_heartrate ? Math.round(act.max_heartrate) : Math.round(avgHR2 * 1.12);
+
+    const seed = (function() {
+      const s = String(act.id||'')+String(act.start_date||'')+String(act.moving_time||'');
+      let h = 0;
+      for(let i=0;i<s.length;i++) h = Math.imul(31,h)+s.charCodeAt(i)|0;
+      return h>>>0;
+    })();
+    let _rng = seed||0xdeadbeef;
+    function sr() {
+      _rng+=0x6d2b79f5; let t=_rng;
+      t=Math.imul(t^t>>>15,t|1); t^=t+Math.imul(t^t>>>7,t|61);
+      return((t^t>>>14)>>>0)/4294967296;
+    }
+
+    const surgeHi  = Math.min(maxP2*0.75, 700);
+    const surgeMid = Math.min(maxP2*0.55, 700);
+    const pBase    = Math.max(0, avgP2*0.62);
+    const pAnchors = [pBase,avgP2*0.80,avgP2*0.95,surgeHi,avgP2*0.90,surgeMid,avgP2*0.92,avgP2*0.95,surgeHi*0.88,avgP2*0.93,avgP2*0.90,avgP2*0.88,avgP2*0.80,avgP2*0.68,pBase*0.85];
+    const hLoA=Math.max(MIN_H+5,avgHR2*0.88), hHiA=Math.min(MAX_H-5,maxHR2*0.96);
+    const hAnchors=[hLoA,avgHR2*0.92,avgHR2,hHiA*0.97,avgHR2*1.02,hHiA,avgHR2*1.03,avgHR2,hHiA*0.97,avgHR2*1.02,avgHR2,avgHR2*0.97,avgHR2,avgHR2*1.01,avgHR2*0.96];
+    const pSigma=Math.max(6,avgP2*0.06);
+
+    function genFallback(anchors,sigma,lo,smooth){
+      const out=[];let v=anchors[0];
+      for(let i=0;i<pts;i++){
+        const t=i/(pts-1);let tgt=0,tw=0;
+        anchors.forEach(function(a,j){const w=Math.exp(-0.5*Math.pow((t-j/(anchors.length-1))/0.15,2));tgt+=a*w;tw+=w;});
+        tgt/=tw;v=v*smooth+tgt*(1-smooth)+(sr()-0.5)*sigma;
+        out.push(Math.max(lo,v));
+      }
+      return out;
+    }
+    powerData = genFallback(pAnchors,pSigma,0,0.70);
+    hrData    = showHR ? genFallback(hAnchors,2,90,0.85) : [];
+  }
+
+  const pts = powerData.length;
+  const totalMins = act.moving_time ? Math.round(act.moving_time/60) : 149;
+
+  // ── Replace loading placeholder with canvas pair ──────────────────────────
+  loadingEl.remove();
+
   const canvasWrap = document.createElement('div');
   canvasWrap.className = 'sc-canvas-wrap';
-  const mainC = document.createElement('canvas'); mainC.id = 'sc-main-'+Date.now();
-  const overC = document.createElement('canvas'); overC.className = 'sc-overlay';
+  const mainC = document.createElement('canvas');
+  const overC = document.createElement('canvas');
+  overC.className = 'sc-overlay';
   canvasWrap.appendChild(mainC);
   canvasWrap.appendChild(overC);
   wrap.appendChild(canvasWrap);
 
-  // Tooltip
   const tip = document.createElement('div');
   tip.className = 'sc-tooltip';
   wrap.appendChild(tip);
 
-  container.appendChild(wrap);
-
   const PAD = { l:50, r: showHR ? 58 : 14, t:20, b:26 };
 
+  // Visible power ceiling — highest zone that appears in this ride + one buffer zone
+  const maxRiding = powerData.reduce(function(m,v){ return Math.max(m,v); }, 0);
+  const topZI = Math.min(PZONES.length-1, getPZI(maxRiding) + 1);
+  const CHART_MAX_P = PZONES[topZI].max === 900 ? Math.max(maxRiding * 1.15, PZONES[topZI-1].max * 1.1) : PZONES[topZI].max;
+
   function resize() {
-    const dpr = window.devicePixelRatio||1;
-    const w = canvasWrap.clientWidth, h = canvasWrap.clientHeight;
-    [mainC, overC].forEach(function(c){ c.width=w*dpr; c.height=h*dpr; });
+    const dpr=window.devicePixelRatio||1, w=canvasWrap.clientWidth, h=canvasWrap.clientHeight;
+    [mainC,overC].forEach(function(c){ c.width=w*dpr; c.height=h*dpr; });
     draw();
   }
 
@@ -2718,87 +2753,93 @@ function buildSessionChart(container, act, ftpW) {
     return { W:mainC.width, H:mainC.height, cw:mainC.width-PAD.l-PAD.r, ch:mainC.height-PAD.t-PAD.b };
   }
 
-  function toX(i,cw)  { return PAD.l+(i/totalMins)*cw; }
-  function toYp(v,ch) { return PAD.t+ch-((v-MIN_P)/(MAX_P-MIN_P))*ch; }
+  function toX(i,cw)  { return PAD.l+(i/(pts-1))*cw; }
+  function toYp(v,ch) { return PAD.t+ch-((v-MIN_P)/(CHART_MAX_P-MIN_P))*ch; }
   function toYh(v,ch) { return PAD.t+ch-((v-MIN_H)/(MAX_H-MIN_H))*ch; }
 
   function draw() {
-    const ctx = mainC.getContext('2d');
-    const { W, H, cw, ch } = dims();
+    const ctx=mainC.getContext('2d');
+    const {W,H,cw,ch}=dims();
     ctx.clearRect(0,0,W,H);
-    const dpr = window.devicePixelRatio||1;
-    const baseY = PAD.t+ch;
+    const dpr=window.devicePixelRatio||1;
+    const baseY=PAD.t+ch;
 
-    // Zone band backgrounds
-    PZONES.forEach(function(z){
-      const y1=toYp(Math.min(z.max,MAX_P),ch), y2=toYp(z.min,ch);
-      ctx.fillStyle=hex2rgba(z.color,0.09);
+    // Zone band backgrounds — only render zones up to chart ceiling
+    PZONES.forEach(function(z,zi){
+      if (z.min >= CHART_MAX_P) return;
+      const y1=toYp(Math.min(z.max,CHART_MAX_P),ch), y2=toYp(z.min,ch);
+      ctx.fillStyle=z.color+'18';
       ctx.fillRect(PAD.l,y1,cw,y2-y1);
-    });
-
-    // Zone separator lines
-    PZONES.forEach(function(z){
-      const y=toYp(z.min,ch);
+      // Zone separator
       ctx.strokeStyle='rgba(255,255,255,0.06)'; ctx.lineWidth=0.5;
-      ctx.beginPath(); ctx.moveTo(PAD.l,y); ctx.lineTo(PAD.l+cw,y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(PAD.l,y1); ctx.lineTo(PAD.l+cw,y1); ctx.stroke();
     });
 
-    // Left Y-axis: watt numbers at zone boundaries, coloured per zone
-    const wattLabels=[0,141,193,230,269,306,341,380];
+    // Left axis: watt labels at zone boundaries
+    const wattLabels = PZONES.filter(function(z){ return z.min < CHART_MAX_P; }).map(function(z){ return z.min; });
+    wattLabels.push(Math.round(CHART_MAX_P));
     ctx.textAlign='right';
     wattLabels.forEach(function(w){
       const y=toYp(w,ch);
-      const zi=getPZI(w===0?0:w);
+      const zi=getPZI(Math.max(1,w));
       ctx.fillStyle=PZONES[zi].color+'cc';
       ctx.font=(9*dpr)+'px var(--mono,monospace)';
       ctx.fillText(w+'W', PAD.l-5, y+3);
     });
 
-    // Left axis title — clearly visible
+    // Left axis title
     ctx.save();
-    ctx.translate(13*dpr, PAD.t+ch/2);
-    ctx.rotate(-Math.PI/2);
+    ctx.translate(13*dpr,PAD.t+ch/2); ctx.rotate(-Math.PI/2);
     ctx.font='500 '+(9*dpr)+'px var(--sans,sans-serif)';
-    ctx.fillStyle='rgba(240,240,255,0.55)';
-    ctx.textAlign='center';
-    ctx.fillText('Power (W)', 0, 0);
-    ctx.restore();
+    ctx.fillStyle='rgba(240,240,255,0.55)'; ctx.textAlign='center';
+    ctx.fillText('Power (W)',0,0); ctx.restore();
 
-    // Right axis: HR bpm ticks at zone boundaries
+    // Right axis: HR ticks
     if (showHR) {
       [119,146,165,194].forEach(function(hv){
         const y=toYh(hv,ch);
         const hzi=getHZI(hv);
         ctx.font=(9*dpr)+'px var(--mono,monospace)';
         ctx.fillStyle=HRZONES[hzi].color+'bb'; ctx.textAlign='left';
-        ctx.fillText(hv+'', W-(PAD.r-5)*dpr, y+3);
+        ctx.fillText(hv+'',W-(PAD.r-5)*dpr,y+3);
         ctx.strokeStyle=HRZONES[hzi].color+'22'; ctx.lineWidth=0.5;
         ctx.setLineDash([2,4]);
         ctx.beginPath(); ctx.moveTo(PAD.l,y); ctx.lineTo(PAD.l+cw,y); ctx.stroke();
         ctx.setLineDash([]);
       });
-
-      // Right axis title — clearly visible
       ctx.save();
-      ctx.translate(W-11*dpr, PAD.t+ch/2);
-      ctx.rotate(Math.PI/2);
+      ctx.translate(W-11*dpr,PAD.t+ch/2); ctx.rotate(Math.PI/2);
       ctx.font='500 '+(9*dpr)+'px var(--sans,sans-serif)';
-      ctx.fillStyle='rgba(240,240,255,0.55)';
-      ctx.textAlign='center';
-      ctx.fillText('Heart Rate (bpm)', 0, 0);
-      ctx.restore();
+      ctx.fillStyle='rgba(240,240,255,0.55)'; ctx.textAlign='center';
+      ctx.fillText('Heart Rate (bpm)',0,0); ctx.restore();
     }
 
-    // Power bars: full height from baseline to zone ceiling
-    const barW=Math.max(2,cw/pts*0.85);
+    // ── Power bars ──
+    // Each bar: height = zone ceiling, colour = zone base colour,
+    // opacity = intra-zone brightness (position within band, low→dim, high→bright)
+    const barW = Math.max(1, cw/pts);
     for(let i=0;i<pts;i++){
-      const w=powerData[i]; const zi=getPZI(w); const z=PZONES[zi];
-      const topY=toYp(Math.min(z.max,MAX_P),ch);
-      ctx.fillStyle=hex2rgba(z.color,0.75);
-      ctx.fillRect(toX(i,cw)-barW/2, topY, barW, baseY-topY);
+      const w=powerData[i];
+      const zi=getPZI(w);
+      const z=PZONES[zi];
+      const zCeilY=toYp(Math.min(z.max,CHART_MAX_P),ch);
+      const bright=zoneBrightness(w); // 0..1 within zone
+      const [r,g,b]=hexRGB(z.color);
+      // Bar fill: dim at zone floor, bright at zone ceiling
+      const alphaHi = 0.55 + bright*0.40;
+      const alphaLo = 0.18 + bright*0.22;
+      const x=toX(i,cw);
+      const grad=ctx.createLinearGradient(0,zCeilY,0,baseY);
+      grad.addColorStop(0,  'rgba('+Math.min(255,r+Math.round(bright*30))+','+Math.min(255,g+Math.round(bright*20))+','+Math.min(255,b+Math.round(bright*10))+','+alphaHi+')');
+      grad.addColorStop(1,  'rgba('+r+','+g+','+b+','+alphaLo+')');
+      ctx.fillStyle=grad;
+      ctx.fillRect(x-barW/2, zCeilY, barW, baseY-zCeilY);
+      // Bright top-edge line at zone ceiling — colour signals zone membership clearly
+      ctx.fillStyle='rgba('+Math.min(255,r+40)+','+Math.min(255,g+40)+','+Math.min(255,b+20)+','+(0.6+bright*0.4)+')';
+      ctx.fillRect(x-barW/2, zCeilY, barW, 2);
     }
 
-    // Average power dashed line
+    // Avg power dashed line
     const avgY=toYp(AVG_P,ch);
     ctx.save();
     ctx.strokeStyle='rgba(255,255,255,0.80)'; ctx.lineWidth=1.5; ctx.setLineDash([7,4]);
@@ -2806,17 +2847,16 @@ function buildSessionChart(container, act, ftpW) {
     ctx.setLineDash([]);
     ctx.font='500 '+(9*dpr)+'px var(--mono,monospace)';
     ctx.fillStyle='rgba(255,255,255,0.85)'; ctx.textAlign='left';
-    ctx.fillText(AVG_P+'W avg', PAD.l+5, avgY-5);
-    ctx.restore();
+    ctx.fillText(AVG_P+'W avg',PAD.l+5,avgY-5); ctx.restore();
 
-    // HR line — coloured segment-by-segment by HR zone
-    if (showHR) {
-      for(let i=0;i<pts-1;i++){
+    // HR line — coloured by HR zone
+    if (showHR && hrData && hrData.length) {
+      for(let i=0;i<hrData.length-1;i++){
         const hzi=getHZI(hrData[i]);
         ctx.strokeStyle=HRZONES[hzi].color; ctx.lineWidth=2; ctx.lineJoin='round';
         ctx.beginPath();
-        ctx.moveTo(toX(i,cw), toYh(hrData[i],ch));
-        ctx.lineTo(toX(i+1,cw), toYh(hrData[i+1],ch));
+        ctx.moveTo(toX(i,cw),toYh(hrData[i],ch));
+        ctx.lineTo(toX(i+1,cw),toYh(hrData[i+1],ch));
         ctx.stroke();
       }
     }
@@ -2825,67 +2865,65 @@ function buildSessionChart(container, act, ftpW) {
     ctx.fillStyle='rgba(107,107,128,0.9)';
     ctx.font=(9*dpr)+'px var(--mono,monospace)';
     ctx.textAlign='center';
-    const tickCount = Math.min(6, Math.floor(totalMins/10));
-    const tickStep  = Math.ceil(totalMins / tickCount / 10) * 10;
+    const tickStep = totalMins <= 60 ? 10 : totalMins <= 120 ? 20 : 30;
     for(let t=0;t<=totalMins;t+=tickStep){
-      const x=toX(t,cw);
+      const frac=t/totalMins;
+      const x=PAD.l+frac*cw;
       const h=Math.floor(t/60), m=t%60;
-      const lbl=h>0?(h+'h'+(m?m+'m':'')):(t+'m');
-      ctx.fillText(lbl, x, H-6);
+      const lbl=h>0?(h+'h'+(m?(m<10?'0'+m:m)+'m':'')):t+'m';
+      ctx.fillText(lbl,x,H-6);
     }
   }
 
-  function drawOverlay(mouseX) {
+  function drawOverlay(mouseX){
     const ctx=overC.getContext('2d');
-    const { W, H, cw, ch }=dims();
+    const {W,H,cw,ch}=dims();
     ctx.clearRect(0,0,W,H);
     if(mouseX===null) return;
-    const i=Math.round(((mouseX-PAD.l)/cw)*totalMins);
-    if(i<0||i>totalMins) return;
+    const i=Math.max(0,Math.min(pts-1,Math.round(((mouseX-PAD.l)/cw)*(pts-1))));
     const x=toX(i,cw);
-    const pzi=getPZI(powerData[i]);
-    const topY=toYp(Math.min(PZONES[pzi].max,MAX_P),ch);
+    const zi=getPZI(powerData[i]);
+    const zCeilY=toYp(Math.min(PZONES[zi].max,CHART_MAX_P),ch);
     ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
     ctx.beginPath(); ctx.moveTo(x,PAD.t); ctx.lineTo(x,PAD.t+ch); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle=PZONES[pzi].color;
-    ctx.beginPath(); ctx.arc(x,topY+5,4,0,Math.PI*2); ctx.fill();
-    if(showHR){
+    ctx.fillStyle=PZONES[zi].color;
+    ctx.beginPath(); ctx.arc(x,zCeilY+2,4,0,Math.PI*2); ctx.fill();
+    if(showHR && hrData && hrData.length){
       const hy=toYh(hrData[i],ch);
-      const hzi=getHZI(hrData[i]);
-      ctx.fillStyle=HRZONES[hzi].color;
+      ctx.fillStyle=HRZONES[getHZI(hrData[i])].color;
       ctx.beginPath(); ctx.arc(x,hy,4,0,Math.PI*2); ctx.fill();
     }
   }
 
-  canvasWrap.addEventListener('mousemove', function(e){
+  canvasWrap.addEventListener('mousemove',function(e){
     const rect=canvasWrap.getBoundingClientRect();
     const dpr=window.devicePixelRatio||1;
     const mx=(e.clientX-rect.left)*dpr;
     const {cw}=dims();
     if(mx<PAD.l||mx>PAD.l+cw){ drawOverlay(null); tip.style.display='none'; return; }
     drawOverlay(mx);
-    const i=Math.max(0,Math.min(totalMins,Math.round(((mx-PAD.l)/cw)*totalMins)));
+    const i=Math.max(0,Math.min(pts-1,Math.round(((mx-PAD.l)/cw)*(pts-1))));
     const pzi=getPZI(powerData[i]);
     const pz=PZONES[pzi];
-    const h=Math.floor(i/60),m=i%60;
-    const ts=h>0?(h+'h '+(m<10?'0'+m:m)+'m'):(i+'m');
+    const timeFrac=i/(pts-1);
+    const tMins=Math.round(timeFrac*totalMins);
+    const h=Math.floor(tMins/60),m=tMins%60;
+    const ts=h>0?(h+'h '+(m<10?'0'+m:m)+'m'):tMins+'m';
     let html='<span style="color:'+pz.color+';font-weight:600">'+pz.label+' '+pz.name+'</span> · '+Math.round(powerData[i])+'W';
-    if(showHR){ const hzi=getHZI(hrData[i]); html+='<br><span style="color:'+HRZONES[hzi].color+'">'+HRZONES[hzi].label+'</span> · '+Math.round(hrData[i])+' bpm'; }
-    html+='<br><span style="color:rgba(107,107,128,0.9);font-size:10px;">'+ts+'</span>';
+    if(showHR&&hrData&&hrData[i]){ const hzi=getHZI(hrData[i]); html+='<br><span style="color:'+HRZONES[hzi].color+'">'+HRZONES[hzi].label+'</span> · '+Math.round(hrData[i])+' bpm'; }
+    html+='<br><span style="color:rgba(107,107,128,0.9);font-size:10px;">'+ts+(powerStream?' · 3s avg':'· estimated')+'</span>';
     tip.innerHTML=html;
     const tx=e.clientX-rect.left+14, ty=e.clientY-rect.top-12;
     tip.style.left=Math.min(tx,rect.width-195)+'px';
     tip.style.top=Math.max(4,ty)+'px';
     tip.style.display='block';
   });
-  canvasWrap.addEventListener('mouseleave', function(){ drawOverlay(null); tip.style.display='none'; });
+  canvasWrap.addEventListener('mouseleave',function(){ drawOverlay(null); tip.style.display='none'; });
 
-  // Defer resize until element is in the DOM and sized
   requestAnimationFrame(function(){ requestAnimationFrame(function(){ resize(); }); });
-  window.addEventListener('resize', resize);
+  window.addEventListener('resize',resize);
 }
-
 // ── Rich recent activities list ───────────────────────────────────────────────
 function buildRecentActivities(activities, ftp) {
   const wrap = document.getElementById('recent-activities-list');
