@@ -254,7 +254,7 @@
 
   /* ── Session chart ── */
   .sc-wrap { position:relative; width:100%; margin:14px 0; }
-  .sc-canvas-wrap { position:relative; width:100%; height:220px; }
+  .sc-canvas-wrap { position:relative; width:100%; height:360px; }
   .sc-canvas-wrap canvas { position:absolute; top:0; left:0; width:100%; height:100%; }
   .sc-overlay { pointer-events:none; }
   .sc-legends { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:8px; }
@@ -2424,10 +2424,12 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
       cell.innerHTML='<div style="font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:3px;">'+s.label+'</div><div style="font-size:14px;color:var(--text);">'+s.val+'</div>';
       statsGrid.appendChild(cell);
     });
-    compDiv.appendChild(statsGrid);
-
     // ── Session chart — power zones + HR overlay ────────────────────────────
     buildSessionChart(compDiv, act, ftpW);
+
+    // Metrics grid — below the chart
+    statsGrid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:2px;margin-bottom:14px;';
+    compDiv.appendChild(statsGrid);
 
     // Analysis
     const ftpW2 = ftpW;
