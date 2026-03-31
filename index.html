@@ -2601,12 +2601,11 @@ async function buildSessionChart(container, act, ftpW) {
     hLegLabel.style.cssText = 'font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.07em;text-transform:uppercase;margin-right:3px;';
     hLegLabel.textContent = 'HR';
     hLegGrp.appendChild(hLegLabel);
-    HRZONES.forEach(function(z) {
-      const item = document.createElement('div');
-      item.style.cssText = 'display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--muted);';
-      item.innerHTML = '<span style="width:10px;height:10px;border-radius:50%;flex-shrink:0;background:'+z.color+';display:inline-block;"></span>'+z.label.replace('HR ','');
-      hLegGrp.appendChild(item);
-    });
+    // Single swatch — golden line matches the chart line colour
+    const hrLineLeg = document.createElement('div');
+    hrLineLeg.style.cssText = 'display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--muted);';
+    hrLineLeg.innerHTML = '<span style="display:inline-block;width:18px;height:0;border-top:2px solid rgba(255,220,100,0.95);"></span>bpm';
+    hLegGrp.appendChild(hrLineLeg);
     legWrap.appendChild(hLegGrp);
   }
   wrap.appendChild(legWrap);
@@ -2815,28 +2814,15 @@ async function buildSessionChart(container, act, ftpW) {
     }
 
     // ── Power bars ──
-    // Each bar: height = zone ceiling, colour = zone base colour,
-    // opacity = intra-zone brightness (position within band, low→dim, high→bright)
+    // Each bar: flat solid zone colour — no intra-band shading for visual clarity
     const barW = Math.max(1, cw/pts);
     for(let i=0;i<pts;i++){
       const w=powerData[i];
       const zi=getPZI(w);
       const z=PZONES[zi];
       const zCeilY=toYp(Math.min(z.max,CHART_MAX_P),ch);
-      const bright=zoneBrightness(w); // 0..1 within zone
-      const [r,g,b]=hexRGB(z.color);
-      // Bar fill: dim at zone floor, bright at zone ceiling
-      const alphaHi = 0.55 + bright*0.40;
-      const alphaLo = 0.18 + bright*0.22;
-      const x=toX(i,cw);
-      const grad=ctx.createLinearGradient(0,zCeilY,0,baseY);
-      grad.addColorStop(0,  'rgba('+Math.min(255,r+Math.round(bright*30))+','+Math.min(255,g+Math.round(bright*20))+','+Math.min(255,b+Math.round(bright*10))+','+alphaHi+')');
-      grad.addColorStop(1,  'rgba('+r+','+g+','+b+','+alphaLo+')');
-      ctx.fillStyle=grad;
-      ctx.fillRect(x-barW/2, zCeilY, barW, baseY-zCeilY);
-      // Bright top-edge line at zone ceiling — colour signals zone membership clearly
-      ctx.fillStyle='rgba('+Math.min(255,r+40)+','+Math.min(255,g+40)+','+Math.min(255,b+20)+','+(0.6+bright*0.4)+')';
-      ctx.fillRect(x-barW/2, zCeilY, barW, 2);
+      ctx.fillStyle=z.color+'c0';
+      ctx.fillRect(toX(i,cw)-barW/2, zCeilY, barW, baseY-zCeilY);
     }
 
     // Avg power dashed line
@@ -2849,16 +2835,19 @@ async function buildSessionChart(container, act, ftpW) {
     ctx.fillStyle='rgba(255,255,255,0.85)'; ctx.textAlign='left';
     ctx.fillText(AVG_P+'W avg',PAD.l+5,avgY-5); ctx.restore();
 
-    // HR line — coloured by HR zone
+    // HR line — single distinctive colour (bright magenta-white), not zone-coloured
+    // so it stands apart clearly from the power bars beneath it
     if (showHR && hrData && hrData.length) {
-      for(let i=0;i<hrData.length-1;i++){
-        const hzi=getHZI(hrData[i]);
-        ctx.strokeStyle=HRZONES[hzi].color; ctx.lineWidth=2; ctx.lineJoin='round';
-        ctx.beginPath();
-        ctx.moveTo(toX(i,cw),toYh(hrData[i],ch));
-        ctx.lineTo(toX(i+1,cw),toYh(hrData[i+1],ch));
-        ctx.stroke();
+      ctx.beginPath();
+      ctx.strokeStyle='rgba(255,220,100,0.95)';
+      ctx.lineWidth=2;
+      ctx.lineJoin='round';
+      ctx.lineCap='round';
+      for(let i=0;i<hrData.length;i++){
+        const x=toX(i,cw), y=toYh(hrData[i],ch);
+        i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
       }
+      ctx.stroke();
     }
 
     // Time axis
@@ -2891,7 +2880,7 @@ async function buildSessionChart(container, act, ftpW) {
     ctx.beginPath(); ctx.arc(x,zCeilY+2,4,0,Math.PI*2); ctx.fill();
     if(showHR && hrData && hrData.length){
       const hy=toYh(hrData[i],ch);
-      ctx.fillStyle=HRZONES[getHZI(hrData[i])].color;
+      ctx.fillStyle='rgba(255,220,100,0.95)';
       ctx.beginPath(); ctx.arc(x,hy,4,0,Math.PI*2); ctx.fill();
     }
   }
@@ -2911,7 +2900,7 @@ async function buildSessionChart(container, act, ftpW) {
     const h=Math.floor(tMins/60),m=tMins%60;
     const ts=h>0?(h+'h '+(m<10?'0'+m:m)+'m'):tMins+'m';
     let html='<span style="color:'+pz.color+';font-weight:600">'+pz.label+' '+pz.name+'</span> · '+Math.round(powerData[i])+'W';
-    if(showHR&&hrData&&hrData[i]){ const hzi=getHZI(hrData[i]); html+='<br><span style="color:'+HRZONES[hzi].color+'">'+HRZONES[hzi].label+'</span> · '+Math.round(hrData[i])+' bpm'; }
+    if(showHR&&hrData&&hrData[i]){ const hzi=getHZI(hrData[i]); html+='<br><span style="color:rgba(255,220,100,0.95)">'+HRZONES[hzi].label+'</span> · '+Math.round(hrData[i])+' bpm'; }
     html+='<br><span style="color:rgba(107,107,128,0.9);font-size:10px;">'+ts+(powerStream?' · 60s avg':' · estimated')+'</span>';
     tip.innerHTML=html;
     const tx=e.clientX-rect.left+14, ty=e.clientY-rect.top-12;
