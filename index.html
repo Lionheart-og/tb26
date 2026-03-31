@@ -266,6 +266,8 @@
   .sc-elev-wrap { position:relative; width:100%; height:80px; margin-top:4px; }
   .sc-elev-wrap canvas { position:absolute; top:0; left:0; width:100%; height:100%; }
   .sc-elev-overlay { pointer-events:none; }
+  .sc-route-wrap { position:relative; width:100%; height:160px; margin-top:4px; background:rgba(0,0,0,0.15); border-radius:8px; overflow:hidden; }
+  .sc-route-wrap canvas { position:absolute; top:0; left:0; width:100%; height:100%; }
   .sc-tooltip { width:100%; background:#16161e; border:.5px solid rgba(255,255,255,0.10); border-radius:6px; padding:7px 12px; font-size:11px; color:var(--text); pointer-events:none; white-space:nowrap; display:none; line-height:1.5; font-family:var(--mono); margin-top:6px; box-sizing:border-box; }
 
 </style>
@@ -2400,6 +2402,8 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
   if (hasCompleted) {
     const act = todayActivity;
     const ftpW = ftp ? ftp.watts : 265;
+    // Only show elevation + route for outdoor rides (not trainer/virtual)
+    const isOutdoor = !act.trainer && act.type !== 'VirtualRide' && act.sport_type !== 'VirtualRide';
     const compDiv = document.createElement('div');
     compDiv.style.cssText = 'padding:1.25rem 1.5rem;';
 
@@ -2428,7 +2432,7 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
       statsGrid.appendChild(cell);
     });
     // ── Session chart — power zones + HR overlay ────────────────────────────
-    buildSessionChart(compDiv, act, ftpW);
+    buildSessionChart(compDiv, act, ftpW, isOutdoor);
 
     // Metrics grid — below the chart
     statsGrid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:2px;margin-bottom:14px;';
@@ -2514,7 +2518,7 @@ function buildPrescribedWorkoutContent(container,wod,todayDay){
 // Fetches real Strava power+HR streams for the activity, computes 60s rolling
 // averages, and renders each reading as a bar reaching the zone ceiling.
 // Bar opacity reflects position within the zone (low→dim, high→bright).
-async function buildSessionChart(container, act, ftpW) {
+async function buildSessionChart(container, act, ftpW, isOutdoor) {
 
   // Shared colour palette (Z1–Z5 power = HR Z1–Z5)
   const C = ['#5090d8','#50c8a0','#d4b840','#e07030','#d03060'];
@@ -2623,21 +2627,22 @@ async function buildSessionChart(container, act, ftpW) {
 
   // ── Fetch real streams from Strava ──────────────────────────────────────
   const token = localStorage.getItem('strava_at') || localStorage.getItem('strava_token') || '';
-  let powerStream = null, hrStream = null, timeStream = null, altStream = null;
+  let powerStream = null, hrStream = null, timeStream = null, altStream = null, latlngStream = null;
 
   if (act.id && token) {
     try {
-      const keys = ['watts', 'heartrate', 'time', 'altitude'].join(',');
+      const keys = ['watts', 'heartrate', 'time', 'altitude', 'latlng'].join(',');
       const res = await fetch(
         'https://www.strava.com/api/v3/activities/' + act.id + '/streams?keys=' + keys + '&key_by_type=true',
         { headers: { Authorization: 'Bearer ' + token } }
       );
       if (res.ok) {
         const streams = await res.json();
-        powerStream = streams.watts     ? streams.watts.data     : null;
-        hrStream    = streams.heartrate ? streams.heartrate.data : null;
-        timeStream  = streams.time      ? streams.time.data      : null;
-        altStream   = streams.altitude  ? streams.altitude.data  : null;
+        powerStream  = streams.watts     ? streams.watts.data     : null;
+        hrStream     = streams.heartrate ? streams.heartrate.data : null;
+        timeStream   = streams.time      ? streams.time.data      : null;
+        altStream    = (isOutdoor && streams.altitude)  ? streams.altitude.data  : null;
+        latlngStream = (isOutdoor && streams.latlng)    ? streams.latlng.data    : null;
       }
     } catch(e) { /* stream fetch failed — fall back to synthetic */ }
   }
@@ -2667,7 +2672,7 @@ async function buildSessionChart(container, act, ftpW) {
 
   const TARGET_PTS = 300; // one point per ~30s for a 2.5hr ride — smooth but fast
 
-  let powerData, hrData, altData;
+  let powerData, hrData, altData, latlngData;
 
   if (powerStream) {
     const raw3s = rolling3s(powerStream); // 60s avg
@@ -2685,6 +2690,9 @@ async function buildSessionChart(container, act, ftpW) {
         return sum / count;
       });
       altData = downsample(altSmooth, TARGET_PTS);
+    }
+    if (latlngStream) {
+      latlngData = downsample(latlngStream, TARGET_PTS);
     }
   } else {
     // ── Fallback: deterministic synthetic data ──────────────────────────────
@@ -2762,7 +2770,17 @@ async function buildSessionChart(container, act, ftpW) {
   elevOC.className = 'sc-elev-overlay';
   elevWrap.appendChild(elevC);
   elevWrap.appendChild(elevOC);
-  if (altData && altData.length) wrap.appendChild(elevWrap);
+  if (isOutdoor && altData && altData.length) wrap.appendChild(elevWrap);
+
+  // Route map — square canvas, coloured by power zone, synced crosshair dot
+  const routeWrap = document.createElement('div');
+  routeWrap.className = 'sc-route-wrap';
+  const routeC  = document.createElement('canvas');
+  const routeOC = document.createElement('canvas');
+  routeOC.className = 'sc-elev-overlay';
+  routeWrap.appendChild(routeC);
+  routeWrap.appendChild(routeOC);
+  if (isOutdoor && latlngData && latlngData.length) wrap.appendChild(routeWrap);
 
   const tip = document.createElement('div');
   tip.className = 'sc-tooltip';
@@ -2779,10 +2797,15 @@ async function buildSessionChart(container, act, ftpW) {
     const dpr=window.devicePixelRatio||1, w=canvasWrap.clientWidth, h=canvasWrap.clientHeight;
     [mainC,overC].forEach(function(c){ c.width=w*dpr; c.height=h*dpr; });
     draw();
-    if (altData && altData.length) {
+    if (isOutdoor && altData && altData.length) {
       const eh = elevWrap.clientHeight;
       [elevC,elevOC].forEach(function(c){ c.width=w*dpr; c.height=eh*dpr; });
       drawElev();
+    }
+    if (isOutdoor && latlngData && latlngData.length) {
+      const rw = routeWrap.clientWidth, rh = routeWrap.clientHeight;
+      [routeC,routeOC].forEach(function(c){ c.width=rw*dpr; c.height=rh*dpr; });
+      drawRoute();
     }
   }
 
@@ -2984,6 +3007,107 @@ async function buildSessionChart(container, act, ftpW) {
     ctx.beginPath(); ctx.arc(x,ey,4,0,Math.PI*2); ctx.fill();
   }
 
+  // ── Route map draw functions ──────────────────────────────────────────────
+  function drawRoute() {
+    if (!latlngData || !latlngData.length) return;
+    const ctx = routeC.getContext('2d');
+    const W = routeC.width, H = routeC.height;
+    ctx.clearRect(0,0,W,H);
+    const dpr = window.devicePixelRatio||1;
+
+    const lats = latlngData.map(function(p){ return p[0]; });
+    const lngs = latlngData.map(function(p){ return p[1]; });
+    const minLat=Math.min(...lats), maxLat=Math.max(...lats);
+    const minLng=Math.min(...lngs), maxLng=Math.max(...lngs);
+    const spanLat=Math.max(0.0001,maxLat-minLat);
+    const spanLng=Math.max(0.0001,maxLng-minLng);
+
+    const RPAD = 28*dpr;
+    const drawW = W-RPAD*2, drawH = H-RPAD*2;
+    // Preserve aspect ratio
+    const scaleX = drawW/spanLng, scaleY = drawH/spanLat;
+    const scale  = Math.min(scaleX,scaleY);
+    const offX   = RPAD + (drawW - spanLng*scale)/2;
+    const offY   = RPAD + (drawH - spanLat*scale)/2;
+
+    function toRX(lng){ return offX + (lng-minLng)*scale; }
+    function toRY(lat){ return offY + (maxLat-lat)*scale; }  // lat flipped (N=up)
+
+    // Background subtle grid hint
+    ctx.fillStyle='rgba(255,255,255,0.015)';
+    ctx.fillRect(RPAD,RPAD,drawW,drawH);
+
+    // Draw route segments coloured by power zone
+    ctx.lineWidth=2.5; ctx.lineJoin='round'; ctx.lineCap='round';
+    for(let i=0;i<latlngData.length-1;i++){
+      const zi=getPZI(powerData[i]||0);
+      ctx.strokeStyle=PZONES[zi].color+'d8';
+      ctx.beginPath();
+      ctx.moveTo(toRX(latlngData[i][1]),   toRY(latlngData[i][0]));
+      ctx.lineTo(toRX(latlngData[i+1][1]), toRY(latlngData[i+1][0]));
+      ctx.stroke();
+    }
+
+    // Start dot (green)
+    const sx=toRX(latlngData[0][1]), sy=toRY(latlngData[0][0]);
+    ctx.fillStyle='#60d090';
+    ctx.beginPath(); ctx.arc(sx,sy,5,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='rgba(0,0,0,0.6)';
+    ctx.beginPath(); ctx.arc(sx,sy,3,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#60d090';
+    ctx.beginPath(); ctx.arc(sx,sy,2,0,Math.PI*2); ctx.fill();
+
+    // End dot (red)
+    const ex=toRX(latlngData[latlngData.length-1][1]), ey=toRY(latlngData[latlngData.length-1][0]);
+    ctx.fillStyle='#f06060';
+    ctx.beginPath(); ctx.arc(ex,ey,5,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='rgba(0,0,0,0.6)';
+    ctx.beginPath(); ctx.arc(ex,ey,3,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#f06060';
+    ctx.beginPath(); ctx.arc(ex,ey,2,0,Math.PI*2); ctx.fill();
+
+    // Label
+    ctx.font='500 '+(8*dpr)+'px var(--mono,monospace)';
+    ctx.fillStyle='rgba(107,107,128,0.6)'; ctx.textAlign='left';
+    ctx.fillText('route · power zones', RPAD+4, RPAD+10);
+  }
+
+  function drawRouteOverlay(idx) {
+    if (!latlngData || !latlngData.length) return;
+    const ctx = routeOC.getContext('2d');
+    const W = routeOC.width, H = routeOC.height;
+    ctx.clearRect(0,0,W,H);
+    if (idx === null) return;
+    const dpr = window.devicePixelRatio||1;
+
+    const lats = latlngData.map(function(p){ return p[0]; });
+    const lngs = latlngData.map(function(p){ return p[1]; });
+    const minLat=Math.min(...lats), maxLat=Math.max(...lats);
+    const minLng=Math.min(...lngs), maxLng=Math.max(...lngs);
+    const spanLat=Math.max(0.0001,maxLat-minLat);
+    const spanLng=Math.max(0.0001,maxLng-minLng);
+    const RPAD=28*dpr, drawW=W-RPAD*2, drawH=H-RPAD*2;
+    const scaleX=drawW/spanLng, scaleY=drawH/spanLat, scale=Math.min(scaleX,scaleY);
+    const offX=RPAD+(drawW-spanLng*scale)/2, offY=RPAD+(drawH-spanLat*scale)/2;
+    function toRX(lng){ return offX+(lng-minLng)*scale; }
+    function toRY(lat){ return offY+(maxLat-lat)*scale; }
+
+    const safeIdx = Math.max(0,Math.min(latlngData.length-1,idx));
+    const px = toRX(latlngData[safeIdx][1]);
+    const py = toRY(latlngData[safeIdx][0]);
+    const zi  = getPZI(powerData[safeIdx]||0);
+
+    // Pulsing ring
+    ctx.strokeStyle=PZONES[zi].color;
+    ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(px,py,8,0,Math.PI*2); ctx.stroke();
+    // Filled dot
+    ctx.fillStyle='rgba(255,255,255,0.95)';
+    ctx.beginPath(); ctx.arc(px,py,4,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=PZONES[zi].color;
+    ctx.beginPath(); ctx.arc(px,py,2.5,0,Math.PI*2); ctx.fill();
+  }
+
   function drawOverlay(idx){
     const ctx=overC.getContext('2d');
     const {W,H,cw,ch}=dims();
@@ -3006,7 +3130,10 @@ async function buildSessionChart(container, act, ftpW) {
 
   function updateHover(idx) {
     drawOverlay(idx);
-    drawElevOverlay(idx);
+    if (isOutdoor) {
+      drawElevOverlay(idx);
+      drawRouteOverlay(idx);
+    }
     if (idx === null) { tip.style.display='none'; return; }
     const pzi=getPZI(powerData[idx]);
     const pz=PZONES[pzi];
@@ -3026,7 +3153,7 @@ async function buildSessionChart(container, act, ftpW) {
         +'<span style="color:#ffffff">'+Math.round(hrData[idx])+' bpm</span>'
         +'<span style="color:rgba(107,107,128,0.6);font-size:10px;"> 3s avg</span>';
     }
-    if(altData&&altData[idx]){
+    if(isOutdoor&&altData&&altData[idx]){
       html+='<span style="color:rgba(107,107,128,0.4);margin:0 8px;">|</span>'
         +'<span style="color:rgba(140,200,120,0.9)">'+Math.round(altData[idx])+'m</span>'
         +'<span style="color:rgba(107,107,128,0.6);font-size:10px;"> elev</span>';
@@ -3043,6 +3170,33 @@ async function buildSessionChart(container, act, ftpW) {
     return Math.max(0,Math.min(pts-1,Math.round(((mx-PAD.l)/cw)*(pts-1))));
   }
 
+  // Route map hover: find nearest point by proximity on the canvas
+  function getIdxFromRouteClick(e) {
+    if (!latlngData || !latlngData.length) return null;
+    const dpr = window.devicePixelRatio||1;
+    const rect = routeWrap.getBoundingClientRect();
+    const mx = (e.clientX-rect.left)*dpr;
+    const my = (e.clientY-rect.top)*dpr;
+    const W = routeC.width, H = routeC.height;
+    const lats = latlngData.map(function(p){ return p[0]; });
+    const lngs = latlngData.map(function(p){ return p[1]; });
+    const minLat=Math.min(...lats), maxLat=Math.max(...lats);
+    const minLng=Math.min(...lngs), maxLng=Math.max(...lngs);
+    const spanLat=Math.max(0.0001,maxLat-minLat), spanLng=Math.max(0.0001,maxLng-minLng);
+    const RPAD=28*dpr, drawW=W-RPAD*2, drawH=H-RPAD*2;
+    const scale=Math.min(drawW/spanLng,drawH/spanLat);
+    const offX=RPAD+(drawW-spanLng*scale)/2, offY=RPAD+(drawH-spanLat*scale)/2;
+    function toRX(lng){ return offX+(lng-minLng)*scale; }
+    function toRY(lat){ return offY+(maxLat-lat)*scale; }
+    let best=0, bestD=Infinity;
+    latlngData.forEach(function(pt,i){
+      const dx=toRX(pt[1])-mx, dy=toRY(pt[0])-my;
+      const d=dx*dx+dy*dy;
+      if(d<bestD){ bestD=d; best=i; }
+    });
+    return best;
+  }
+
   function handleMove(e, sourceRect) {
     const dpr=window.devicePixelRatio||1;
     const mx=(e.clientX-sourceRect.left)*dpr;
@@ -3052,9 +3206,13 @@ async function buildSessionChart(container, act, ftpW) {
 
   canvasWrap.addEventListener('mousemove',function(e){ handleMove(e, canvasWrap.getBoundingClientRect()); });
   canvasWrap.addEventListener('mouseleave',function(){ updateHover(null); });
-  if(altData&&altData.length){
+  if(isOutdoor && altData && altData.length){
     elevWrap.addEventListener('mousemove',function(e){ handleMove(e, elevWrap.getBoundingClientRect()); });
     elevWrap.addEventListener('mouseleave',function(){ updateHover(null); });
+  }
+  if(isOutdoor && latlngData && latlngData.length){
+    routeWrap.addEventListener('mousemove',function(e){ updateHover(getIdxFromRouteClick(e)); });
+    routeWrap.addEventListener('mouseleave',function(){ updateHover(null); });
   }
 
   requestAnimationFrame(function(){ requestAnimationFrame(function(){ resize(); }); });
