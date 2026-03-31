@@ -602,15 +602,15 @@ const GOALS_SK = 'goals_v2';
 const GOAL_SK  = 'race_goal_v1'; // legacy key — read-only for migration
 
 const GOAL_DEFAULTS = {
-  name:     'Trans Baviaans 2026',
-  date:     '2026-08-08',
-  distance: 230,
-  elevation:3000,
-  timeGoal: 11.0,
-  startTime:'10:00',
-  location: 'Willowmore → Jeffreys Bay',
+  name:     '',
+  date:     '',
+  distance: 100,
+  elevation:1500,
+  timeGoal: 6.0,
+  startTime:'07:00',
+  location: '',
   raceType: 'mtb',
-  priority: 'A',
+  priority: 'A1',
 };
 
 function makeGoalId() {
@@ -4007,6 +4007,14 @@ Important note: for Baviaans specifically, some long rides remain essential rega
 
   document.getElementById('dashboard').style.display = 'block';
 
+  // ── First-run setup banner — shown when user has no goals yet ───────────────
+  // Option B: dashboard loads first, persistent banner guides through setup
+  const existingSetup = document.getElementById('first-run-banner');
+  if (existingSetup) existingSetup.remove();
+  if (!allGoals || allGoals.length === 0) {
+    showFirstRunBanner(athlete, ftp, wkg);
+  }
+
   // ── Build today's combined suggestion + workout block ─────────────────────
   // Find today's actual Strava activity if one exists
   const todayStr = localDateKey(new Date());
@@ -4933,6 +4941,216 @@ function stravaAuthUrl() {
     '&scope=read,activity:read';
 }
 
+// ── First-run onboarding banner (Option B) ───────────────────────────────────
+// Shown after dashboard loads when the user has no goals configured.
+// Guides through: (1) body weight, (2) first goal. Dismisses on completion.
+function showFirstRunBanner(athlete, ftp, wkg) {
+  const app = document.getElementById('app');
+  const dashboard = document.getElementById('dashboard');
+
+  const banner = document.createElement('div');
+  banner.id = 'first-run-banner';
+  banner.style.cssText = 'margin-bottom:1.5rem;';
+
+  const name = athlete ? (athlete.firstname || 'there') : 'there';
+  const ftpStr = ftp && ftp.watts ? ftp.watts + 'W' : 'not yet calculated';
+  const wkgStr = wkg ? wkg + ' W/kg' : 'pending';
+
+  banner.innerHTML = `
+    <div style="background:linear-gradient(135deg,rgba(96,200,240,0.09),rgba(200,240,96,0.05));border:.5px solid rgba(96,200,240,0.35);border-radius:16px;padding:1.75rem 2rem;position:relative;">
+
+      <!-- Close -->
+      <button onclick="document.getElementById('first-run-banner').remove();localStorage.setItem('setup_dismissed','1');"
+        style="position:absolute;top:14px;right:14px;background:transparent;border:none;color:var(--muted);font-size:18px;cursor:pointer;line-height:1;padding:4px 8px;" title="Dismiss">✕</button>
+
+      <!-- Greeting -->
+      <div style="margin-bottom:1.25rem;">
+        <div style="font-size:1.15rem;font-weight:400;color:var(--text);margin-bottom:4px;">👋 Welcome, ${name}!</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.6;">
+          Your Strava data is loaded — eFTP detected at <strong style="color:#f0a060;">${ftpStr}</strong> (${wkgStr}).
+          Complete two quick steps to personalise your dashboard.
+        </div>
+      </div>
+
+      <!-- Step tabs -->
+      <div style="display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap;">
+        <div id="frb-tab-1" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 12px;border-radius:100px;background:rgba(96,200,240,0.15);border:.5px solid rgba(96,200,240,0.5);color:#60c8f0;cursor:pointer;" onclick="frbShowStep(1)">① Weight</div>
+        <div id="frb-tab-2" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 12px;border-radius:100px;background:transparent;border:.5px solid rgba(255,255,255,0.1);color:var(--muted);cursor:pointer;" onclick="frbShowStep(2)">② First goal</div>
+      </div>
+
+      <!-- Step 1: Weight -->
+      <div id="frb-step-1">
+        <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:8px;">What is your current body weight?</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6;">Used to calculate W/kg — the key metric for climbing and race readiness targets.</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <input id="frb-weight" type="number" min="40" max="150" step="0.5" placeholder="e.g. 75"
+            style="width:100px;background:#111118;border:.5px solid rgba(96,200,240,0.4);border-radius:8px;padding:10px 12px;font-size:16px;color:var(--text);outline:none;text-align:center;font-family:'DM Mono',monospace;" />
+          <span style="font-size:13px;color:var(--muted);">kg</span>
+          <button onclick="frbSaveWeight()"
+            style="background:rgba(96,200,240,0.12);border:.5px solid rgba(96,200,240,0.45);border-radius:8px;padding:10px 20px;color:#60c8f0;font-size:13px;cursor:pointer;touch-action:manipulation;font-family:'DM Mono',monospace;">
+            Save & next →
+          </button>
+        </div>
+        <div id="frb-weight-err" style="font-size:12px;color:#f06060;margin-top:6px;display:none;">Please enter a weight between 40 and 150 kg.</div>
+      </div>
+
+      <!-- Step 2: First goal -->
+      <div id="frb-step-2" style="display:none;">
+        <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:8px;">Add your first goal race</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.6;">This drives your training plan, readiness score, and W/kg targets. You can add more goals later.</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+
+          <div style="grid-column:1/-1;">
+            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Race name</div>
+            <input id="frb-name" type="text" placeholder="e.g. Cape Epic 2026"
+              style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:9px 12px;font-size:14px;color:var(--text);outline:none;box-sizing:border-box;" />
+          </div>
+
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Race date</div>
+            <input id="frb-date" type="date"
+              style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:9px 12px;font-size:14px;color:var(--text);outline:none;box-sizing:border-box;" />
+          </div>
+
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Race type</div>
+            <select id="frb-type" style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:9px 12px;font-size:14px;color:var(--text);outline:none;box-sizing:border-box;">
+              <option value="mtb">🚵 MTB</option>
+              <option value="gravel">🌾 Gravel</option>
+              <option value="road">🛣️ Road</option>
+            </select>
+          </div>
+
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Distance (km)</div>
+            <input id="frb-dist" type="number" min="5" max="1000" placeholder="e.g. 100"
+              style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:9px 12px;font-size:14px;color:var(--text);outline:none;box-sizing:border-box;" />
+          </div>
+
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Elevation (m)</div>
+            <input id="frb-elev" type="number" min="0" max="20000" placeholder="e.g. 2500"
+              style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:9px 12px;font-size:14px;color:var(--text);outline:none;box-sizing:border-box;" />
+          </div>
+
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Goal time (hours)</div>
+            <input id="frb-time" type="number" min="0.5" max="48" step="0.5" placeholder="e.g. 8.0"
+              style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:9px 12px;font-size:14px;color:var(--text);outline:none;box-sizing:border-box;"
+              oninput="frbUpdatePreview()" />
+          </div>
+
+        </div>
+
+        <!-- Live preview -->
+        <div id="frb-preview" style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);padding:8px 12px;background:rgba(200,240,96,0.04);border:.5px solid rgba(200,240,96,0.15);border-radius:8px;margin-bottom:12px;min-height:20px;"></div>
+
+        <div id="frb-goal-err" style="font-size:12px;color:#f06060;margin-bottom:8px;display:none;">Please fill in race name, date, distance and goal time.</div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button onclick="frbSaveGoal()"
+            style="background:rgba(200,240,96,0.12);border:.5px solid rgba(200,240,96,0.4);border-radius:8px;padding:10px 24px;color:#c8f060;font-size:13px;cursor:pointer;touch-action:manipulation;font-family:'DM Mono',monospace;">
+            ✓ Build my plan
+          </button>
+          <button onclick="frbShowStep(1)"
+            style="background:transparent;border:.5px solid rgba(255,255,255,0.1);border-radius:8px;padding:10px 16px;color:var(--muted);font-size:13px;cursor:pointer;touch-action:manipulation;">
+            ← Back
+          </button>
+        </div>
+      </div>
+
+    </div>`;
+
+  // Insert at very top of dashboard
+  dashboard.insertBefore(banner, dashboard.firstChild);
+}
+
+window.frbShowStep = function(step) {
+  document.getElementById('frb-step-1').style.display = step === 1 ? 'block' : 'none';
+  document.getElementById('frb-step-2').style.display = step === 2 ? 'block' : 'none';
+  const t1 = document.getElementById('frb-tab-1');
+  const t2 = document.getElementById('frb-tab-2');
+  if (t1) { t1.style.background = step===1?'rgba(96,200,240,0.15)':'transparent'; t1.style.borderColor = step===1?'rgba(96,200,240,0.5)':'rgba(255,255,255,0.1)'; t1.style.color = step===1?'#60c8f0':'var(--muted)'; }
+  if (t2) { t2.style.background = step===2?'rgba(200,240,96,0.15)':'transparent'; t2.style.borderColor = step===2?'rgba(200,240,96,0.5)':'rgba(255,255,255,0.1)'; t2.style.color = step===2?'#c8f060':'var(--muted)'; }
+};
+
+window.frbSaveWeight = function() {
+  const val = parseFloat(document.getElementById('frb-weight')?.value);
+  const err = document.getElementById('frb-weight-err');
+  if (!val || val < 40 || val > 150) { if (err) err.style.display = 'block'; return; }
+  if (err) err.style.display = 'none';
+  ATHLETE_WEIGHT_KG = val;
+  setAthleteWeight(val);
+  logWeight(val, localDateKey(new Date()));
+  // Update W/kg card if visible
+  const wkgEl = document.getElementById('wkg-value');
+  const wi = document.getElementById('weight-input');
+  if (wi) wi.value = val;
+  if (wkgEl && window._lastFtp) wkgEl.textContent = (window._lastFtp / val).toFixed(1);
+  frbShowStep(2);
+};
+
+window.frbUpdatePreview = function() {
+  const time = parseFloat(document.getElementById('frb-time')?.value) || 0;
+  const dist = parseFloat(document.getElementById('frb-dist')?.value) || 0;
+  const elev = parseFloat(document.getElementById('frb-elev')?.value) || 0;
+  const el = document.getElementById('frb-preview');
+  if (!el) return;
+  if (!time || !dist) { el.textContent = ''; return; }
+  const avgSpeed = (dist / time).toFixed(1);
+  const mockGoal = { distance: dist, elevation: elev || 0, timeGoal: time, startTime: '07:00' };
+  const finish = calcFinishTime(mockGoal);
+  const targetWkg = ATHLETE_WEIGHT_KG > 0 ? calcTargetWkg(mockGoal, ATHLETE_WEIGHT_KG) : '—';
+  el.textContent = dist + 'km ÷ ' + time + 'hr = ' + avgSpeed + 'km/h avg · finish ~' + finish + ' · target W/kg ≥ ' + targetWkg;
+};
+
+window.frbSaveGoal = function() {
+  const name = (document.getElementById('frb-name')?.value || '').trim();
+  const date = document.getElementById('frb-date')?.value || '';
+  const dist = parseFloat(document.getElementById('frb-dist')?.value);
+  const elev = parseFloat(document.getElementById('frb-elev')?.value) || 0;
+  const time = parseFloat(document.getElementById('frb-time')?.value);
+  const type = document.getElementById('frb-type')?.value || 'mtb';
+  const err  = document.getElementById('frb-goal-err');
+
+  if (!name || !date || !dist || !time) {
+    if (err) err.style.display = 'block';
+    return;
+  }
+  if (err) err.style.display = 'none';
+
+  const g = {
+    id: makeGoalId(),
+    name, date, distance: dist, elevation: elev,
+    timeGoal: time, startTime: '07:00', location: '',
+    raceType: type, priority: 'A1',
+  };
+  saveGoals([g]);
+  localStorage.setItem('setup_dismissed', '1');
+
+  // Remove banner and reload to apply new goal
+  const banner = document.getElementById('first-run-banner');
+  if (banner) banner.remove();
+
+  // Flash confirmation then reload
+  const flash = document.createElement('div');
+  flash.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#18181f;border:.5px solid rgba(200,240,96,0.5);border-radius:100px;padding:10px 20px;font-family:var(--mono);font-size:13px;color:#c8f060;z-index:9999;white-space:nowrap;';
+  flash.textContent = '✓ Goal saved — building your plan…';
+  document.body.appendChild(flash);
+  setTimeout(function() { location.reload(); }, 1200);
+};
+
+// Helper used inside frbSaveWeight — reuse existing logWeight if present
+function logWeight(kg, dateStr) {
+  try {
+    const WEIGHT_LOG_SK = 'weight_log_v1';
+    const log = JSON.parse(localStorage.getItem(WEIGHT_LOG_SK) || '{}');
+    log[dateStr] = kg;
+    localStorage.setItem(WEIGHT_LOG_SK, JSON.stringify(log));
+  } catch(e) {}
+}
+
 function showTokenUI(subtitle) {
   document.getElementById('loading').style.display = 'none';
   const app = document.getElementById('app');
@@ -4940,62 +5158,81 @@ function showTokenUI(subtitle) {
   if (existing) existing.remove();
 
   const workerConfigured = WORKER_URL && !WORKER_URL.includes('YOUR_WORKER');
+  const isExpired = subtitle && (subtitle.includes('expired') || subtitle.includes('re-connect'));
   const banner = document.createElement('div');
   banner.id = 'token-banner';
-  banner.style.cssText = 'background:#18181f;border:0.5px solid rgba(200,240,96,0.35);border-radius:14px;padding:1.5rem;margin-bottom:1.5rem;';
 
   if (!workerConfigured) {
-    // First-time setup — show Worker deployment steps
+    banner.style.cssText = 'background:#18181f;border:.5px solid rgba(200,240,96,0.35);border-radius:14px;padding:1.5rem;margin-bottom:1.5rem;';
     banner.innerHTML = `
       <div style="font-size:15px;font-weight:500;color:#c8f060;margin-bottom:8px;">⚙️ One-time setup needed</div>
       <div style="font-size:13px;color:#9090a8;line-height:1.8;margin-bottom:1.25rem;">
-        To auto-refresh tokens on any device, deploy a free Cloudflare Worker (2 min, free forever).
-        Then this dashboard will connect and stay connected with zero maintenance.
+        To auto-refresh tokens, deploy a free Cloudflare Worker (2 min). Then this dashboard will connect and stay connected automatically.
       </div>
-
-      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:1.25rem;">
-        <div style="background:#0d0d14;border:.5px solid rgba(200,240,96,0.2);border-radius:10px;padding:1rem;">
-          <div style="font-size:12px;font-weight:500;color:#c8f060;margin-bottom:8px;">Deploy the Worker (2 min)</div>
-          <div style="font-size:12px;color:#9090a8;line-height:1.9;">
-            1. Go to <a href="https://dash.cloudflare.com" target="_blank" style="color:#60c8f0;">dash.cloudflare.com</a> → sign up free<br>
-            2. Click <strong style="color:#f0f0f8">Workers &amp; Pages → Create → Create Worker</strong><br>
-            3. Replace the default code with the contents of <strong style="color:#f0f0f8">worker.js</strong> (in the same download)<br>
-            4. Click <strong style="color:#f0f0f8">Deploy</strong> — copy the <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px;">https://...workers.dev</code> URL<br>
-            5. Open this dashboard file, find <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px;">WORKER_URL = 'YOUR_WORKER_URL_HERE'</code> and replace with your URL<br>
-            6. Re-upload to Netlify — done permanently
-          </div>
+      <div style="background:#0d0d14;border:.5px solid rgba(200,240,96,0.2);border-radius:10px;padding:1rem;margin-bottom:1rem;">
+        <div style="font-size:12px;font-weight:500;color:#c8f060;margin-bottom:8px;">Deploy the Worker (2 min)</div>
+        <div style="font-size:12px;color:#9090a8;line-height:1.9;">
+          1. Go to <a href="https://dash.cloudflare.com" target="_blank" style="color:#60c8f0;">dash.cloudflare.com</a> → sign up free<br>
+          2. Workers &amp; Pages → Create → Create Worker<br>
+          3. Replace default code with <strong style="color:#f0f0f8">worker.js</strong> contents<br>
+          4. Deploy → copy the <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px;">.workers.dev</code> URL<br>
+          5. Find <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px;">WORKER_URL = 'YOUR_WORKER_URL_HERE'</code> in this file and replace<br>
+          6. Re-upload to Netlify
         </div>
       </div>
-
       <div style="font-size:12px;color:#6b6b80;margin-bottom:0.75rem;">— or paste a token manually in the meantime —</div>
-      <div style="font-size:12px;color:#9090a8;line-height:1.7;margin-bottom:0.75rem;">
-        Get one from <a href="https://www.strava.com/settings/api" target="_blank" style="color:#60c8f0;">strava.com/settings/api</a> or
-        run in PowerShell / <a href="https://hoppscotch.io" target="_blank" style="color:#60c8f0;">hoppscotch.io</a>:
-        <span style="font-family:'DM Mono',monospace;background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px;font-size:11px;display:block;margin-top:4px;word-break:break-all;user-select:all;">POST https://www.strava.com/oauth/token · client_id=211345 · client_secret=76f1282d30e05a5476ffdbdf5ec7b6d0f90c15c5 · refresh_token=baac5a29ad12df3286ada23edc4973432aaf3251 · grant_type=refresh_token</span>
-      </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <input id="token-input" type="text" placeholder="Paste access_token value..." style="flex:1;min-width:200px;background:#111118;border:0.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;font-family:'DM Mono',monospace;font-size:16px;color:#f0f0f8;outline:none;min-height:44px;" />
-        <button onclick="applyNewToken()" style="background:rgba(200,240,96,0.1);border:0.5px solid rgba(200,240,96,0.4);border-radius:8px;padding:10px 18px;color:#c8f060;font-size:14px;cursor:pointer;min-height:44px;touch-action:manipulation;white-space:nowrap;">Load</button>
+        <input id="token-input" type="text" placeholder="Paste access_token value..." style="flex:1;min-width:200px;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;font-family:'DM Mono',monospace;font-size:16px;color:#f0f0f8;outline:none;min-height:44px;" />
+        <button onclick="applyNewToken()" style="background:rgba(200,240,96,0.1);border:.5px solid rgba(200,240,96,0.4);border-radius:8px;padding:10px 18px;color:#c8f060;font-size:14px;cursor:pointer;min-height:44px;touch-action:manipulation;white-space:nowrap;">Load</button>
       </div>`;
-  } else {
-    // Worker configured — show Connect with Strava button
+  } else if (isExpired) {
+    banner.style.cssText = 'background:#18181f;border:.5px solid rgba(240,160,96,0.4);border-radius:14px;padding:1.25rem 1.5rem;margin-bottom:1.5rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;';
     banner.innerHTML = `
-      <div style="font-size:15px;font-weight:500;color:#c8f060;margin-bottom:6px;">🔗 Connect to Strava</div>
-      <div style="font-size:13px;color:#9090a8;line-height:1.7;margin-bottom:1.25rem;">${subtitle || 'Tap below to authorise. You\'ll be redirected back automatically.'}</div>
-      <a href="${stravaAuthUrl()}"
-        style="display:inline-flex;align-items:center;gap:10px;background:#fc4c02;border:none;border-radius:10px;padding:12px 24px;color:#fff;font-size:15px;font-weight:500;text-decoration:none;margin-bottom:1.25rem;touch-action:manipulation;cursor:pointer;">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l-7 13.828h4.169"/></svg>
-        Connect with Strava
-      </a>
-      <div style="font-size:12px;color:#6b6b80;margin-bottom:0.75rem;">— or paste a token manually —</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <input id="token-input" type="text" placeholder="Paste access_token value..." style="flex:1;min-width:200px;background:#111118;border:0.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;font-family:'DM Mono',monospace;font-size:16px;color:#f0f0f8;outline:none;min-height:44px;" />
-        <button onclick="applyNewToken()" style="background:rgba(200,240,96,0.1);border:0.5px solid rgba(200,240,96,0.4);border-radius:8px;padding:10px 18px;color:#c8f060;font-size:14px;cursor:pointer;min-height:44px;touch-action:manipulation;white-space:nowrap;">Load</button>
+      <div style="flex:1;min-width:200px;">
+        <div style="font-size:14px;font-weight:500;color:#f0a060;margin-bottom:3px;">🔄 Session expired</div>
+        <div style="font-size:12px;color:#9090a8;">${subtitle}</div>
+      </div>
+      <a href="${stravaAuthUrl()}" style="display:inline-flex;align-items:center;gap:8px;background:#fc4c02;border-radius:10px;padding:10px 20px;color:#fff;font-size:14px;font-weight:500;text-decoration:none;white-space:nowrap;touch-action:manipulation;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l-7 13.828h4.169"/></svg>
+        Reconnect Strava
+      </a>`;
+  } else {
+    banner.style.cssText = 'margin-bottom:1.5rem;';
+    banner.innerHTML = `
+      <div style="background:linear-gradient(135deg,rgba(200,240,96,0.08),rgba(96,200,240,0.05));border:.5px solid rgba(200,240,96,0.25);border-radius:16px;padding:2rem 2rem 1.75rem;">
+        <div style="margin-bottom:1.5rem;">
+          <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px;">Training Intelligence</div>
+          <div style="font-size:1.4rem;font-weight:300;letter-spacing:-0.02em;color:var(--text);margin-bottom:8px;">Your personal cycling performance dashboard</div>
+          <div style="font-size:13px;color:var(--muted);line-height:1.7;max-width:560px;">Connect your Strava account to get your Performance Management Chart, power zone analysis, goal readiness score, and a personalised training plan — all calculated from your actual ride data.</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px;margin-bottom:1.75rem;">
+          <div style="background:rgba(0,0,0,0.2);border:.5px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 14px;"><div style="font-size:18px;margin-bottom:4px;">📈</div><div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:2px;">Fitness tracking</div><div style="font-size:11px;color:var(--muted);line-height:1.5;">CTL · ATL · Form (TSB) from your rides</div></div>
+          <div style="background:rgba(0,0,0,0.2);border:.5px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 14px;"><div style="font-size:18px;margin-bottom:4px;">⚡</div><div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:2px;">Power analysis</div><div style="font-size:11px;color:var(--muted);line-height:1.5;">eFTP · W/kg · zone distribution</div></div>
+          <div style="background:rgba(0,0,0,0.2);border:.5px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 14px;"><div style="font-size:18px;margin-bottom:4px;">🎯</div><div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:2px;">Goal readiness</div><div style="font-size:11px;color:var(--muted);line-height:1.5;">Physics-based W/kg targets for your race</div></div>
+          <div style="background:rgba(0,0,0,0.2);border:.5px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 14px;"><div style="font-size:18px;margin-bottom:4px;">📅</div><div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:2px;">Training plan</div><div style="font-size:11px;color:var(--muted);line-height:1.5;">21-week periodised plan to your race</div></div>
+        </div>
+        <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);margin-bottom:1.25rem;padding:8px 12px;background:rgba(255,255,255,0.03);border-radius:8px;border:.5px solid rgba(255,255,255,0.07);">
+          🔒 <strong style="color:var(--text);">Your data stays in your browser.</strong> We read activities, power and heart rate — read-only, never stored on any server. Revoke any time from Strava settings.
+        </div>
+        <a href="${stravaAuthUrl()}" style="display:inline-flex;align-items:center;gap:10px;background:#fc4c02;border-radius:12px;padding:14px 28px;color:#fff;font-size:15px;font-weight:500;text-decoration:none;touch-action:manipulation;margin-bottom:1rem;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l-7 13.828h4.169"/></svg>
+          Connect with Strava — it's free
+        </a>
+        <div>
+          <button onclick="var s=document.getElementById('manual-token-section');s.style.display=s.style.display==='none'?'block':'none'" style="background:transparent;border:none;font-size:12px;color:var(--muted);cursor:pointer;padding:0;text-decoration:underline;">Have a token? Paste manually</button>
+          <div id="manual-token-section" style="display:none;margin-top:10px;">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <input id="token-input" type="text" placeholder="Paste access_token value..." style="flex:1;min-width:200px;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;font-family:'DM Mono',monospace;font-size:16px;color:#f0f0f8;outline:none;min-height:44px;" />
+              <button onclick="applyNewToken()" style="background:rgba(200,240,96,0.1);border:.5px solid rgba(200,240,96,0.4);border-radius:8px;padding:10px 18px;color:#c8f060;font-size:14px;cursor:pointer;min-height:44px;touch-action:manipulation;white-space:nowrap;">Load</button>
+            </div>
+          </div>
+        </div>
       </div>`;
   }
   app.insertBefore(banner, app.children[2]);
-  document.getElementById('status-text').textContent = workerConfigured ? 'Authorisation required' : 'Setup required';
+  document.getElementById('status-text').textContent = isExpired ? 'Session expired — please reconnect' : workerConfigured ? 'Connect Strava to get started' : 'Setup required';
 }
+
 
 window.applyNewToken = function() {
   const input = document.getElementById('token-input');
