@@ -3502,60 +3502,64 @@ function render(athlete, activities, metrics) {
 
           return '<div style="margin-top:1rem;padding-top:1rem;border-top:.5px solid rgba(255,255,255,0.07);">' +
             '<div style="font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;">All goals — by date</div>' +
-            '<div style="display:flex;flex-direction:column;gap:6px;">' +
+            '<div style="display:flex;flex-direction:column;gap:4px;">' +
             others.map(g => {
               const gDays = Math.ceil((new Date(g.date+'T06:00:00') - new Date()) / 86400000);
               const gWks  = Math.floor(gDays / 7);
               const gType = {mtb:'MTB',gravel:'Gravel',road:'Road'}[g.raceType||'mtb']||'MTB';
               const pCol  = priorityCol(g.priority);
               const pIcon = priorityIcon(g.priority);
-              // Pre-compute mini readiness for this goal
               const gr = calcGoalReadiness(parseFloat(wkg)||0, fitness, activities, g, ATHLETE_WEIGHT_KG);
               const scoreCol = gr.statusCol;
               const wkgOk  = gr.wkgGap <= 0;
               const ctlOk  = fitness >= 85;
               const specOk = gr.mtbPct >= 60;
               const peekId = 'peek-' + g.id;
+              const dateStr = new Date(g.date+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
 
               return `<div style="background:rgba(255,255,255,0.02);border:.5px solid rgba(255,255,255,0.07);border-radius:8px;overflow:hidden;">
-                <!-- Card — two-row layout for mobile compatibility -->
-                <div onclick="(function(){var p=document.getElementById('${peekId}');p.style.display=p.style.display==='none'?'block':'none';})()" style="padding:10px 12px;cursor:pointer;">
-                  <!-- Row 1: icon + name + meta -->
-                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;min-width:0;">
-                    <div style="display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;">
-                      <span style="font-size:14px;line-height:1;">${pIcon}</span>
-                      <span style="font-family:var(--mono);font-size:8px;font-weight:600;color:${pCol};letter-spacing:.04em;">${g.priority||'B'}</span>
-                    </div>
-                    <div style="min-width:0;flex:1;">
-                      <div style="font-size:13px;font-weight:400;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${g.name}</div>
-                      <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:1px;">${new Date(g.date+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})} · ${g.distance}km ${gType} · sub-${g.timeGoal}hr</div>
-                    </div>
-                    <span style="font-family:var(--mono);font-size:10px;color:var(--muted);flex-shrink:0;">▾</span>
+
+                <!-- Single compact row -->
+                <div onclick="(function(){var p=document.getElementById('${peekId}');p.style.display=p.style.display==='none'?'block':'none';})()"
+                  style="display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;min-width:0;">
+
+                  <!-- Priority icon -->
+                  <div style="display:flex;flex-direction:column;align-items:center;gap:0px;flex-shrink:0;line-height:1;">
+                    <span style="font-size:13px;">${pIcon}</span>
+                    <span style="font-family:var(--mono);font-size:7px;font-weight:600;color:${pCol};letter-spacing:.04em;">${g.priority||'B'}</span>
                   </div>
-                  <!-- Row 2: score pill + days + action buttons -->
-                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                      <div style="font-family:var(--mono);font-size:11px;font-weight:500;color:${scoreCol};background:rgba(255,255,255,0.04);border:.5px solid ${scoreCol}44;border-radius:100px;padding:2px 10px;">${gr.score}/100</div>
-                      <div style="font-family:var(--mono);font-size:11px;color:${pCol};font-weight:300;">${gDays} <span style="font-size:9px;color:var(--muted);">days · ${gWks}w</span></div>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:6px;" onclick="event.stopPropagation();">
-                      <button onclick="promoteGoal('${g.id}')" title="Promote to A goal" style="background:rgba(240,208,96,0.08);border:.5px solid rgba(240,208,96,0.25);border-radius:6px;padding:5px 10px;color:#f0d060;font-size:11px;cursor:pointer;font-family:var(--mono);min-height:30px;">↑ A</button>
-                      <button onclick="openGoalEdit('${g.id}')" style="background:rgba(255,255,255,0.05);border:.5px solid rgba(255,255,255,0.12);border-radius:6px;padding:5px 10px;color:var(--muted);font-size:11px;cursor:pointer;font-family:var(--mono);min-height:30px;">✎</button>
-                      <button onclick="deleteGoal('${g.id}')" style="background:rgba(240,96,96,0.06);border:.5px solid rgba(240,96,96,0.2);border-radius:6px;padding:5px 10px;color:#f06060;font-size:11px;cursor:pointer;font-family:var(--mono);min-height:30px;">✕</button>
-                    </div>
+
+                  <!-- Name + meta -->
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-size:13px;font-weight:400;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${g.name}</div>
+                    <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${dateStr} · ${g.distance}km ${gType} · sub-${g.timeGoal}hr</div>
                   </div>
+
+                  <!-- Score pill -->
+                  <div style="font-family:var(--mono);font-size:11px;font-weight:500;color:${scoreCol};background:rgba(255,255,255,0.04);border:.5px solid ${scoreCol}44;border-radius:100px;padding:2px 9px;flex-shrink:0;white-space:nowrap;">${gr.score}/100</div>
+
+                  <!-- Days/weeks -->
+                  <div style="font-family:var(--mono);font-size:11px;color:${pCol};font-weight:300;flex-shrink:0;white-space:nowrap;min-width:52px;text-align:right;">${gDays}<span style="font-size:9px;color:var(--muted);"> d · ${gWks}w</span></div>
+
+                  <!-- Action buttons -->
+                  <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;" onclick="event.stopPropagation();">
+                    <button onclick="promoteGoal('${g.id}')" title="Promote to A goal" style="background:rgba(240,208,96,0.08);border:.5px solid rgba(240,208,96,0.25);border-radius:6px;padding:4px 8px;color:#f0d060;font-size:10px;cursor:pointer;font-family:var(--mono);line-height:1.4;">↑ A</button>
+                    <button onclick="openGoalEdit('${g.id}')" style="background:rgba(255,255,255,0.05);border:.5px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 8px;color:var(--muted);font-size:10px;cursor:pointer;font-family:var(--mono);line-height:1.4;">✎</button>
+                    <button onclick="deleteGoal('${g.id}')" style="background:rgba(240,96,96,0.06);border:.5px solid rgba(240,96,96,0.2);border-radius:6px;padding:4px 8px;color:#f06060;font-size:10px;cursor:pointer;font-family:var(--mono);line-height:1.4;">✕</button>
+                  </div>
+
+                  <!-- Expand chevron -->
+                  <span style="font-family:var(--mono);font-size:10px;color:var(--muted);flex-shrink:0;">▾</span>
                 </div>
 
-                <!-- Peek panel — hidden by default, shown on click -->
+                <!-- Peek panel — hidden by default -->
                 <div id="${peekId}" style="display:none;padding:10px 12px;border-top:.5px solid rgba(255,255,255,0.06);background:rgba(0,0,0,0.15);">
-                  <!-- Score bar -->
-                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
                     <div style="font-family:var(--mono);font-size:10px;color:${scoreCol};font-weight:500;white-space:nowrap;">${gr.status}</div>
                     <div style="flex:1;min-width:60px;height:4px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;">
                       <div style="height:100%;width:${gr.score}%;background:linear-gradient(90deg,#f06060,#f0a060,#c8f060,#60d090);border-radius:100px;"></div>
                     </div>
                   </div>
-                  <!-- Three mini metric tiles — stack on mobile -->
                   <div class="peek-3col" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
                     <div style="background:rgba(255,255,255,0.02);border:.5px solid ${wkgOk?'rgba(96,208,144,0.35)':'rgba(240,160,96,0.25)'};border-radius:6px;padding:7px 9px;">
                       <div style="font-family:var(--mono);font-size:8px;color:${wkgOk?'#60d090':'#f0a060'};text-transform:uppercase;margin-bottom:3px;">W/kg</div>
