@@ -2405,216 +2405,6 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
     secLbl.textContent = "Today's completed session — "+todayDay;
     compDiv.appendChild(secLbl);
 
-    // Power profile
-    const isRide = ['Ride','MountainBikeRide','VirtualRide','GravelRide'].includes(act.sport_type||act.type);
-    const isGym  = ['WeightTraining','Workout'].includes(act.sport_type||act.type);
-    const PROF_H = 210; // extra height for time axis
-    const profileBg = document.createElement('div');
-    profileBg.style.cssText = 'background:rgba(0,0,0,0.25);border-radius:8px;overflow:hidden;margin-bottom:14px;height:'+PROF_H+'px;position:relative;';
-    if (isRide) {
-      const cvs = document.createElement('canvas');
-      cvs.style.cssText = 'display:block;width:100%;height:'+PROF_H+'px;';
-      profileBg.appendChild(cvs);
-      const mark = document.createElement('div');
-      mark.style.cssText = 'position:absolute;top:4px;right:8px;font-family:var(--mono);font-size:9px;color:rgba(200,240,96,0.6);letter-spacing:.08em;';
-      mark.textContent = 'ACTUAL EFFORT';
-      profileBg.appendChild(mark);
-      // Use setTimeout to ensure the element is laid out before reading offsetWidth
-      setTimeout(function(){
-        cvs.width  = cvs.offsetWidth || 800;
-        cvs.height = PROF_H;
-        if (cvs.width < 10) return; // safety guard
-        const ctx = cvs.getContext('2d');
-        const W = cvs.width, H = PROF_H;
-        const PAD_TOP = 8, PAD_BOT = 22;
-        const PAD_LEFT = 28, PAD_RIGHT = 36;
-        const drawW = W - PAD_LEFT - PAD_RIGHT;
-        const drawH = H - PAD_TOP - PAD_BOT;
-        const avgW  = act.average_watts || Math.round(ftpW * 0.72);
-        const avgHR = act.average_heartrate || 0;
-        const maxHR = act.max_heartrate || (avgHR ? avgHR * 1.15 : 0);
-        const minHR = Math.max(50, avgHR * 0.72);
-
-        // Safe zone config — always use defaults if _zoneConfig not ready
-        const DEFAULT_POWER_ZONES = [
-          { max:0.56, col:'#6b7db5', label:'Z1' },
-          { max:0.76, col:'#4a9eff', label:'Z2' },
-          { max:0.90, col:'#60c8f0', label:'Z3' },
-          { max:1.05, col:'#f0a060', label:'Z4' },
-          { max:1.20, col:'#f06060', label:'Z5' },
-          { max:99,   col:'#f030a0', label:'Z6' },
-        ];
-        const ZONES = (window._zoneConfig && window._zoneConfig.power && window._zoneConfig.power.length >= 5)
-          ? window._zoneConfig.power.map(z => ({ max:z.maxFrac, col:z.col, label:z.label }))
-          : DEFAULT_POWER_ZONES;
-        function zoneColour(w) {
-          const r = w / ftpW;
-          return (ZONES.find(z => r < z.max) || ZONES[ZONES.length-1]).col;
-        }
-
-        const ZONE_CEIL = { Z1:0.20, Z2:0.40, Z3:0.58, Z4:0.76, Z5:0.92, Z6:1.0 };
-        const ZONE_BANDS = { Z1:[0,0.56], Z2:[0.56,0.76], Z3:[0.76,0.90], Z4:[0.90,1.05], Z5:[1.05,1.20], Z6:[1.20,1.60] };
-        function zoneOfW(w) {
-          const r = w/ftpW;
-          if(r<0.56)return'Z1'; if(r<0.76)return'Z2'; if(r<0.90)return'Z3';
-          if(r<1.05)return'Z4'; if(r<1.20)return'Z5'; return'Z6';
-        }
-        function zoneBrightness(w) {
-          const z=zoneOfW(w), bd=ZONE_BANDS[z]||[0,0.56], r=w/ftpW;
-          return Math.max(0,Math.min(1,(r-bd[0])/(bd[1]-bd[0])));
-        }
-        function zoneCeilY(z) {
-          return PAD_TOP + drawH - Math.round((ZONE_CEIL[z]||0.20) * drawH);
-        }
-
-        // Scale
-        const drawMax = avgW * 1.40;
-
-        // ── Left axis: Power zone labels — aligned to bar ceiling heights ─────
-        ctx.font = '500 8px monospace';
-        ['Z1','Z2','Z3','Z4','Z5'].forEach(function(zn, zi) {
-          const y = zoneCeilY(zn);
-          const col = ZONES[zi].col;
-          // Dashed boundary line
-          ctx.strokeStyle = col + '22';
-          ctx.setLineDash([2,4]); ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.moveTo(PAD_LEFT, y); ctx.lineTo(PAD_LEFT+drawW, y); ctx.stroke();
-          ctx.setLineDash([]);
-          // Label
-          ctx.fillStyle = col + 'cc'; ctx.textAlign = 'right';
-          ctx.fillText(zn, PAD_LEFT - 3, y + 3);
-        });
-
-        // Build power segments
-        const nSegs = 26;
-        const segW  = drawW / nSegs;
-        const segs  = [];
-        for (let i = 0; i < nSegs; i++) {
-          const frac = i / nSegs;
-          let power;
-          if      (frac < 0.12) { power = avgW * (0.45 + (frac/0.12) * 0.35); }
-          else if (frac < 0.22) { power = avgW * (0.80 + ((frac-0.12)/0.10) * 0.20); }
-          else if (frac < 0.82) {
-            const v = Math.sin(i*1.7)*0.15 + Math.sin(i*0.5)*0.10;
-            power = avgW * (1.0 + v);
-            if (i%5===2) power = avgW * (1.22 + Math.abs(Math.sin(i))*0.15);
-            if (i%7===4) power = avgW * 0.72;
-          }
-          else if (frac < 0.92) { power = avgW * (1.0 - ((frac-0.82)/0.10)*0.22); }
-          else                  { power = avgW * (0.78 - ((frac-0.92)/0.08)*0.28); }
-          segs.push({ x: PAD_LEFT + i*segW, w: segW+0.5, power: Math.max(0, Math.round(power)) });
-        }
-
-        // Build HR points (used for both drawing and hover)
-        const durMins = Math.round((act.moving_time||0)/60);
-        const hrRange = avgHR && maxHR ? maxHR - minHR : 1;
-        const hrPts = segs.map(function(seg,i){
-          const frac=i/nSegs;
-          let hr;
-          if(frac<0.12) hr=minHR+hrRange*(0.15+(frac/0.12)*0.40);
-          else if(frac<0.85){const drift=(frac-0.12)/0.73*0.15;const react=Math.sin(i*1.4)*0.08+Math.sin(i*0.7)*0.05;hr=avgHR+hrRange*(drift+react-0.06);}
-          else hr=avgHR*(1.01-((frac-0.85)/0.15)*0.20);
-          hr=Math.max(minHR,Math.min(maxHR||180,hr));
-          const hrY=PAD_TOP+drawH-Math.round(((hr-minHR)/hrRange)*drawH*0.80);
-          return {x:seg.x+seg.w/2, y:hrY, hr:Math.round(hr), power:seg.power, mins:Math.round((i/nSegs)*durMins)};
-        });
-
-        // Draw power bars — zone ceiling height, brightness by actual watts
-        segs.forEach(function(seg, i) {
-          const z=zoneOfW(seg.power), ceil=ZONE_CEIL[z]||0.20;
-          const fillH=Math.max(3,Math.round(ceil*drawH));
-          const y=PAD_TOP+drawH-fillH;
-          const col=zoneColour(seg.power);
-          const bright=zoneBrightness(seg.power);
-          const ri=parseInt(col.slice(1,3),16), gi=parseInt(col.slice(3,5),16), bi=parseInt(col.slice(5,7),16);
-          const topA=0.55+bright*0.35, botA=0.20+bright*0.20;
-          const rH=Math.min(255,ri+Math.round(bright*30)), gH=Math.min(255,gi+Math.round(bright*30)), bH=Math.min(255,bi+Math.round(bright*30));
-          const grad=ctx.createLinearGradient(0,y,0,y+fillH);
-          grad.addColorStop(0,   `rgba(${rH},${gH},${bH},${topA})`);
-          grad.addColorStop(0.6, `rgba(${ri},${gi},${bi},${(topA+botA)/2})`);
-          grad.addColorStop(1,   `rgba(${Math.max(0,ri-10)},${Math.max(0,gi-10)},${Math.max(0,bi-10)},${botA})`);
-          ctx.fillStyle=grad; ctx.fillRect(Math.floor(seg.x),y,Math.ceil(seg.w),fillH);
-          ctx.fillStyle=`rgba(${rH},${gH},${bH},0.95)`; ctx.fillRect(Math.floor(seg.x),y,Math.ceil(seg.w),2);
-          // Hard edge at zone transitions only
-          const next=segs[i+1];
-          if(next&&zoneOfW(next.power)!==z){ctx.fillStyle='rgba(0,0,0,0.85)';ctx.fillRect(Math.floor(seg.x+seg.w-1),PAD_TOP,2,drawH);}
-        });
-
-        // Avg power reference line
-        const avgY=PAD_TOP+drawH-Math.round((avgW/drawMax)*drawH);
-        ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.setLineDash([4,4]); ctx.lineWidth=1;
-        ctx.beginPath(); ctx.moveTo(PAD_LEFT,avgY); ctx.lineTo(PAD_LEFT+drawW,avgY); ctx.stroke();
-        ctx.setLineDash([]);
-        if(act.average_watts){ctx.fillStyle='rgba(255,255,255,0.9)';ctx.font='bold 11px sans-serif';ctx.textAlign='center';ctx.fillText(Math.round(act.average_watts)+'W avg',PAD_LEFT+drawW/2,avgY>PAD_TOP+14?avgY-4:avgY+14);}
-
-        // ── HR overlay — uses pre-built hrPts ────────────────────────────────
-        if (avgHR && maxHR) {
-          ctx.beginPath(); ctx.moveTo(hrPts[0].x,hrPts[0].y);
-          for(let i=1;i<hrPts.length;i++) ctx.lineTo(hrPts[i].x,hrPts[i].y);
-          ctx.strokeStyle='rgba(240,160,240,0.85)'; ctx.lineWidth=1.5; ctx.stroke();
-          const HR_ZONES=[{pct:0.60,label:'Z1',col:'#6b7db5'},{pct:0.70,label:'Z2',col:'#4a9eff'},{pct:0.80,label:'Z3',col:'#60c8f0'},{pct:0.90,label:'Z4',col:'#f0a060'},{pct:1.00,label:'Z5',col:'#f06060'}];
-          ctx.font='500 8px monospace'; ctx.textAlign='left';
-          HR_ZONES.forEach(function(hz){
-            const hrBound=(maxHR||180)*hz.pct;
-            if(hrBound<minHR||hrBound>maxHR)return;
-            const hrY=PAD_TOP+drawH-Math.round(((hrBound-minHR)/hrRange)*drawH*0.80);
-            if(hrY<PAD_TOP||hrY>PAD_TOP+drawH)return;
-            ctx.strokeStyle=hz.col+'18'; ctx.setLineDash([1,5]); ctx.lineWidth=0.5;
-            ctx.beginPath(); ctx.moveTo(PAD_LEFT,hrY); ctx.lineTo(PAD_LEFT+drawW,hrY); ctx.stroke(); ctx.setLineDash([]);
-            ctx.fillStyle=hz.col+'cc'; ctx.fillText(hz.label,PAD_LEFT+drawW+4,hrY+3);
-          });
-          ctx.fillStyle='rgba(240,160,240,0.8)'; ctx.font='500 8px monospace'; ctx.textAlign='left';
-          ctx.fillText(Math.round(avgHR)+' bpm',PAD_LEFT+drawW+4,hrPts[Math.floor(hrPts.length/2)].y-4);
-        }
-
-        // ── Time axis ─────────────────────────────────────────────────────────
-        const axisY=PAD_TOP+drawH+2;
-        ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1;
-        ctx.beginPath(); ctx.moveTo(PAD_LEFT,axisY); ctx.lineTo(PAD_LEFT+drawW,axisY); ctx.stroke();
-        ctx.font='500 8px monospace'; ctx.textAlign='center';
-        for(let t=0;t<=5;t++){
-          const px=PAD_LEFT+Math.round((t/5)*drawW);
-          const mins=Math.round((t/5)*durMins);
-          const lbl=mins>=60?Math.floor(mins/60)+'h'+(mins%60?String(mins%60).padStart(2,'0')+'m':''): mins+'m';
-          ctx.fillStyle='rgba(255,255,255,0.10)'; ctx.fillRect(px,axisY,1,4);
-          ctx.fillStyle='rgba(255,255,255,0.38)'; ctx.fillText(lbl,Math.max(PAD_LEFT+10,Math.min(PAD_LEFT+drawW-10,px)),axisY+12);
-        }
-
-        // ── Crosshair tooltip ─────────────────────────────────────────────────
-        const tip=document.createElement('div');
-        tip.style.cssText='position:absolute;display:none;pointer-events:none;background:#16161e;border:.5px solid rgba(255,255,255,0.14);border-radius:8px;padding:6px 10px;font-family:var(--mono);font-size:10px;color:var(--text);line-height:1.8;white-space:nowrap;box-shadow:0 8px 24px rgba(0,0,0,0.6);z-index:10;';
-        profileBg.appendChild(tip);
-        cvs.addEventListener('mousemove',function(e){
-          const rect=cvs.getBoundingClientRect();
-          const mx=(e.clientX-rect.left)*(cvs.width/rect.width);
-          if(mx<PAD_LEFT||mx>PAD_LEFT+drawW){tip.style.display='none';return;}
-          let closest=segs[0],closestIdx=0,minD=Infinity;
-          segs.forEach(function(seg,i){const d=Math.abs(seg.x+seg.w/2-mx);if(d<minD){minD=d;closest=seg;closestIdx=i;}});
-          const z=zoneOfW(closest.power), zCol=zoneColour(closest.power);
-          const hp=hrPts[closestIdx], timeStr=hp?hp.mins>=60?Math.floor(hp.mins/60)+'h'+String(hp.mins%60).padStart(2,'0')+'m':hp.mins+'m':'—';
-          tip.innerHTML='<span style="color:'+zCol+';font-weight:600;">'+z+'</span> · <span style="color:'+zCol+'">'+Math.round(closest.power)+'W</span>'+
-            (hp&&avgHR?' · <span style="color:rgba(240,160,240,0.9);">'+Math.round(hp.hr||avgHR)+' bpm</span>':'')+
-            '<br><span style="color:var(--muted)">⏱ '+timeStr+'</span>';
-          tip.style.display='block';
-          const relX=e.clientX-rect.left, relY=e.clientY-rect.top;
-          tip.style.left=(relX+14+160>rect.width?relX-168:relX+14)+'px';
-          tip.style.top=Math.max(2,relY-24)+'px';
-          // Crosshair lines
-          const cx=closest.x+closest.w/2;
-          ctx.save(); ctx.strokeStyle='rgba(255,255,255,0.30)'; ctx.setLineDash([3,3]); ctx.lineWidth=1;
-          ctx.beginPath(); ctx.moveTo(cx,PAD_TOP); ctx.lineTo(cx,PAD_TOP+drawH); ctx.stroke();
-          if(hp&&avgHR){ctx.beginPath(); ctx.moveTo(PAD_LEFT,hp.y); ctx.lineTo(PAD_LEFT+drawW,hp.y); ctx.stroke();}
-          ctx.setLineDash([]); ctx.restore();
-        });
-        cvs.addEventListener('mouseleave',function(){tip.style.display='none';}); 
-
-
-      }, 80); // 80ms gives the DOM time to lay out
-    } else {
-      profileBg.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:'+PROF_H+'px;font-size:28px;">'+(isGym?'🏋️':emoji(act.sport_type||act.type))+'</div>';
-    }
-    compDiv.appendChild(profileBg);
-
     // Stats grid
     const statsGrid = document.createElement('div');
     statsGrid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:14px;';
@@ -2785,44 +2575,49 @@ function buildSessionChart(container, act, ftpW) {
   lbl.textContent = "Today's session — power zones & heart rate";
   wrap.appendChild(lbl);
 
-  // Legend
+  // Legend — power left, HR right, separated
   const legWrap = document.createElement('div');
-  legWrap.className = 'sc-legends';
+  legWrap.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;flex-wrap:wrap;';
 
-  // Power legend
+  // Power legend (left)
   const pLegGrp = document.createElement('div');
-  pLegGrp.className = 'sc-leg-group';
+  pLegGrp.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;align-items:center;';
   const pLegLabel = document.createElement('span');
-  pLegLabel.className = 'sc-leg-label';
+  pLegLabel.style.cssText = 'font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.07em;text-transform:uppercase;margin-right:3px;';
   pLegLabel.textContent = 'Power';
   pLegGrp.appendChild(pLegLabel);
   PZONES.forEach(function(z) {
     const item = document.createElement('div');
-    item.className = 'sc-leg-item';
-    item.innerHTML = '<span class="sc-leg-swatch" style="background:'+z.color+(z.label==='Z7'?';opacity:.5':'')+';"></span>'+z.label;
+    item.style.cssText = 'display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--muted);';
+    item.innerHTML = '<span style="width:10px;height:10px;border-radius:2px;flex-shrink:0;background:'+z.color+(z.label==='Z7'?';opacity:.5':'')+';display:inline-block;"></span>'+z.label;
     pLegGrp.appendChild(item);
   });
   legWrap.appendChild(pLegGrp);
 
-  // HR legend
+  // HR legend (right)
   if (showHR) {
     const hLegGrp = document.createElement('div');
-    hLegGrp.className = 'sc-leg-group';
+    hLegGrp.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;align-items:center;';
+    // Avg power line entry
+    const avgLeg = document.createElement('div');
+    avgLeg.style.cssText = 'display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--muted);margin-right:4px;';
+    avgLeg.innerHTML = '<span style="display:inline-block;width:18px;height:0;border-top:2px dashed rgba(255,255,255,0.75);"></span>'+AVG_P+'W avg';
+    hLegGrp.appendChild(avgLeg);
+    // Separator pipe
+    const sep = document.createElement('span');
+    sep.style.cssText = 'color:rgba(255,255,255,0.12);font-size:14px;margin:0 2px;user-select:none;';
+    sep.textContent = '|';
+    hLegGrp.appendChild(sep);
     const hLegLabel = document.createElement('span');
-    hLegLabel.className = 'sc-leg-label';
+    hLegLabel.style.cssText = 'font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.07em;text-transform:uppercase;margin-right:3px;';
     hLegLabel.textContent = 'HR';
     hLegGrp.appendChild(hLegLabel);
     HRZONES.forEach(function(z) {
       const item = document.createElement('div');
-      item.className = 'sc-leg-item';
-      item.innerHTML = '<span class="sc-leg-swatch" style="background:'+z.color+';border-radius:50%;"></span>'+z.label.replace('HR ','');
+      item.style.cssText = 'display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--muted);';
+      item.innerHTML = '<span style="width:10px;height:10px;border-radius:50%;flex-shrink:0;background:'+z.color+';display:inline-block;"></span>'+z.label.replace('HR ','');
       hLegGrp.appendChild(item);
     });
-    // Avg power line legend
-    const avgLeg = document.createElement('div');
-    avgLeg.className = 'sc-leg-item';
-    avgLeg.innerHTML = '<span style="display:inline-block;width:18px;height:0;border-top:2px dashed rgba(255,255,255,0.75);margin-right:2px;"></span>'+AVG_P+'W avg';
-    hLegGrp.appendChild(avgLeg);
     legWrap.appendChild(hLegGrp);
   }
   wrap.appendChild(legWrap);
