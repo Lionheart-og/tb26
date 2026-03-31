@@ -2604,7 +2604,7 @@ async function buildSessionChart(container, act, ftpW) {
     // Single swatch — golden line matches the chart line colour
     const hrLineLeg = document.createElement('div');
     hrLineLeg.style.cssText = 'display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--muted);';
-    hrLineLeg.innerHTML = '<span style="display:inline-block;width:18px;height:0;border-top:2.5px solid rgba(255,255,255,1.0);"></span>bpm';
+    hrLineLeg.innerHTML = '<span style="display:inline-block;width:18px;height:0;border-top:2px solid #ff6b6b;"></span>bpm';
     hLegGrp.appendChild(hrLineLeg);
     legWrap.appendChild(hLegGrp);
   }
@@ -2793,11 +2793,15 @@ async function buildSessionChart(container, act, ftpW) {
     ctx.fillStyle='rgba(240,240,255,0.55)'; ctx.textAlign='center';
     ctx.fillText('Power (W)',0,0); ctx.restore();
 
-    // Right axis: HR ticks
+    // Right axis: HR ticks — all 5 zone boundaries including top
     if (showHR) {
-      [119,146,165,194].forEach(function(hv){
-        const y=toYh(hv,ch);
-        const hzi=getHZI(hv);
+      // Show boundary at bottom of each zone plus a top cap
+      const hrTickVals = [119, 146, 165, 194, Math.round(MAX_H)];
+      hrTickVals.forEach(function(hv){
+        if (hv < MIN_H || hv > MAX_H + 5) return;
+        const y = toYh(Math.min(hv, MAX_H), ch);
+        if (y < PAD.t - 2 || y > PAD.t + ch + 2) return;
+        const hzi = Math.min(getHZI(hv), HRZONES.length - 1);
         ctx.font=(9*dpr)+'px var(--mono,monospace)';
         ctx.fillStyle=HRZONES[hzi].color+'bb'; ctx.textAlign='left';
         ctx.fillText(hv+'',W-(PAD.r-5)*dpr,y+3);
@@ -2836,23 +2840,12 @@ async function buildSessionChart(container, act, ftpW) {
     ctx.fillStyle=avgZone.color; ctx.textAlign='left';
     ctx.fillText(AVG_P+'W avg',PAD.l+5,avgY-5); ctx.restore();
 
-    // HR line — drawn last so it sits on top of everything
-    // Dark shadow pass first for legibility against busy bars, then bright line on top
+    // HR line — coral/salmon: warm, high-contrast against cool power zone palette,
+    // clearly distinct from blues, greens, ambers and purples of the power zones.
     if (showHR && hrData && hrData.length) {
-      // Shadow
       ctx.beginPath();
-      ctx.strokeStyle='rgba(0,0,0,0.55)';
-      ctx.lineWidth=5;
-      ctx.lineJoin='round'; ctx.lineCap='round';
-      for(let i=0;i<hrData.length;i++){
-        const x=toX(i,cw), y=toYh(hrData[i],ch);
-        i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
-      }
-      ctx.stroke();
-      // Bright line
-      ctx.beginPath();
-      ctx.strokeStyle='rgba(255,255,255,1.0)';
-      ctx.lineWidth=2.5;
+      ctx.strokeStyle='#ff6b6b';
+      ctx.lineWidth=2;
       ctx.lineJoin='round'; ctx.lineCap='round';
       for(let i=0;i<hrData.length;i++){
         const x=toX(i,cw), y=toYh(hrData[i],ch);
@@ -2891,7 +2884,7 @@ async function buildSessionChart(container, act, ftpW) {
     ctx.beginPath(); ctx.arc(x,zCeilY+2,4,0,Math.PI*2); ctx.fill();
     if(showHR && hrData && hrData.length){
       const hy=toYh(hrData[i],ch);
-      ctx.fillStyle='rgba(255,255,255,1.0)';
+      ctx.fillStyle='#ff6b6b';
       ctx.beginPath(); ctx.arc(x,hy,4,0,Math.PI*2); ctx.fill();
     }
   }
@@ -2911,7 +2904,7 @@ async function buildSessionChart(container, act, ftpW) {
     const h=Math.floor(tMins/60),m=tMins%60;
     const ts=h>0?(h+'h '+(m<10?'0'+m:m)+'m'):tMins+'m';
     let html='<span style="color:'+pz.color+';font-weight:600">'+pz.label+' '+pz.name+'</span> · '+Math.round(powerData[i])+'W';
-    if(showHR&&hrData&&hrData[i]){ const hzi=getHZI(hrData[i]); html+='<br><span style="color:rgba(255,255,255,0.9)">'+HRZONES[hzi].label+'</span> · '+Math.round(hrData[i])+' bpm'; }
+    if(showHR&&hrData&&hrData[i]){ const hzi=getHZI(hrData[i]); html+='<br><span style="color:#ff6b6b">'+HRZONES[hzi].label+'</span> · '+Math.round(hrData[i])+' bpm'; }
     html+='<br><span style="color:rgba(107,107,128,0.9);font-size:10px;">'+ts+(powerStream?' · 60s avg':' · estimated')+'</span>';
     tip.innerHTML=html;
     const tx=e.clientX-rect.left+14, ty=e.clientY-rect.top-12;
