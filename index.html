@@ -263,7 +263,7 @@
   .sc-leg-item { display:flex; align-items:center; gap:4px; font-family:var(--mono); font-size:10px; color:var(--muted); }
   .sc-leg-swatch { width:10px; height:10px; border-radius:2px; flex-shrink:0; }
   .sc-leg-line { width:18px; height:0; border-top:2px dashed rgba(255,255,255,0.7); flex-shrink:0; vertical-align:middle; }
-  .sc-tooltip { position:absolute; background:#16161e; border:.5px solid rgba(255,255,255,0.13); border-radius:6px; padding:8px 11px; font-size:11px; color:var(--text); pointer-events:none; white-space:nowrap; display:none; z-index:10; line-height:1.7; font-family:var(--sans); }
+  .sc-tooltip { width:100%; background:#16161e; border:.5px solid rgba(255,255,255,0.10); border-radius:6px; padding:7px 12px; font-size:11px; color:var(--text); pointer-events:none; white-space:nowrap; display:none; line-height:1.5; font-family:var(--mono); margin-top:6px; box-sizing:border-box; }
 
 </style>
 </head>
@@ -2604,7 +2604,7 @@ async function buildSessionChart(container, act, ftpW) {
     // Single swatch — golden line matches the chart line colour
     const hrLineLeg = document.createElement('div');
     hrLineLeg.style.cssText = 'display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--muted);';
-    hrLineLeg.innerHTML = '<span style="display:inline-block;width:18px;height:0;border-top:2px solid #ff6b6b;"></span>bpm';
+    hrLineLeg.innerHTML = '<span style="display:inline-block;width:18px;height:0;border-top:1.5px solid rgba(255,255,255,0.90);"></span>bpm';
     hLegGrp.appendChild(hrLineLeg);
     legWrap.appendChild(hLegGrp);
   }
@@ -2840,12 +2840,11 @@ async function buildSessionChart(container, act, ftpW) {
     ctx.fillStyle=avgZone.color; ctx.textAlign='left';
     ctx.fillText(AVG_P+'W avg',PAD.l+5,avgY-5); ctx.restore();
 
-    // HR line — coral/salmon: warm, high-contrast against cool power zone palette,
-    // clearly distinct from blues, greens, ambers and purples of the power zones.
+    // HR line — white: maximum contrast against all power zone colours
     if (showHR && hrData && hrData.length) {
       ctx.beginPath();
-      ctx.strokeStyle='#ff6b6b';
-      ctx.lineWidth=2;
+      ctx.strokeStyle='rgba(255,255,255,0.90)';
+      ctx.lineWidth=1.5;
       ctx.lineJoin='round'; ctx.lineCap='round';
       for(let i=0;i<hrData.length;i++){
         const x=toX(i,cw), y=toYh(hrData[i],ch);
@@ -2884,7 +2883,7 @@ async function buildSessionChart(container, act, ftpW) {
     ctx.beginPath(); ctx.arc(x,zCeilY+2,4,0,Math.PI*2); ctx.fill();
     if(showHR && hrData && hrData.length){
       const hy=toYh(hrData[i],ch);
-      ctx.fillStyle='#ff6b6b';
+      ctx.fillStyle='rgba(255,255,255,0.90)';
       ctx.beginPath(); ctx.arc(x,hy,4,0,Math.PI*2); ctx.fill();
     }
   }
@@ -2903,13 +2902,24 @@ async function buildSessionChart(container, act, ftpW) {
     const tMins=Math.round(timeFrac*totalMins);
     const h=Math.floor(tMins/60),m=tMins%60;
     const ts=h>0?(h+'h '+(m<10?'0'+m:m)+'m'):tMins+'m';
-    let html='<span style="color:'+pz.color+';font-weight:600">'+pz.label+' '+pz.name+'</span> · '+Math.round(powerData[i])+'W';
-    if(showHR&&hrData&&hrData[i]){ const hzi=getHZI(hrData[i]); html+='<br><span style="color:#ff6b6b">'+HRZONES[hzi].label+'</span> · '+Math.round(hrData[i])+' bpm'; }
-    html+='<br><span style="color:rgba(107,107,128,0.9);font-size:10px;">'+ts+(powerStream?' · 60s avg':' · estimated')+'</span>';
+    // Power row
+    let html='<span style="color:'+pz.color+';font-weight:600">'+pz.label+' '+pz.name+'</span>'
+      +'<span style="color:var(--muted)"> · </span>'
+      +'<span style="color:'+pz.color+'">'+Math.round(powerData[i])+'W</span>'
+      +'<span style="color:rgba(107,107,128,0.6);font-size:10px;"> 60s avg</span>';
+    // HR row
+    if(showHR&&hrData&&hrData[i]){
+      const hzi=getHZI(hrData[i]);
+      html+='<span style="color:rgba(107,107,128,0.4);margin:0 8px;">|</span>'
+        +'<span style="color:#ffffff">'+HRZONES[hzi].label+'</span>'
+        +'<span style="color:var(--muted)"> · </span>'
+        +'<span style="color:#ffffff">'+Math.round(hrData[i])+' bpm</span>'
+        +'<span style="color:rgba(107,107,128,0.6);font-size:10px;"> 3s avg</span>';
+    }
+    // Time
+    html+='<span style="color:rgba(107,107,128,0.4);margin:0 8px;">|</span>'
+      +'<span style="color:rgba(107,107,128,0.8);">'+ts+'</span>';
     tip.innerHTML=html;
-    const tx=e.clientX-rect.left+14, ty=e.clientY-rect.top-12;
-    tip.style.left=Math.min(tx,rect.width-195)+'px';
-    tip.style.top=Math.max(4,ty)+'px';
     tip.style.display='block';
   });
   canvasWrap.addEventListener('mouseleave',function(){ drawOverlay(null); tip.style.display='none'; });
