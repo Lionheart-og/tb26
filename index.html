@@ -3062,6 +3062,10 @@ async function buildSessionChart(container, act, ftpW, isOutdoor) {
     const originTile = latLngToTile(maxLat, minLng, zoom);
     const endTile    = latLngToTile(minLat, maxLng, zoom);
 
+    // Dark background immediately while tiles load
+    ctx.fillStyle = '#1a1d22';
+    ctx.fillRect(0, 0, W, H);
+
     // Centre offset so route sits in middle of canvas
     const routePixStart = latLngToPixel(maxLat, minLng, zoom, originTile.x, originTile.y, TILE_SIZE);
     const routePixEnd   = latLngToPixel(minLat, maxLng, zoom, originTile.x, originTile.y, TILE_SIZE);
@@ -3070,20 +3074,47 @@ async function buildSessionChart(container, act, ftpW, isOutdoor) {
     const offsetX = (W - routePixW) / 2 - routePixStart.px;
     const offsetY = (H - routePixH) / 2 - routePixStart.py;
 
-    // Draw OSM dark tiles (Stadia Alidade Smooth Dark — no key needed for low usage)
+    // Draw OpenStreetMap tiles with dark treatment applied via offscreen canvas
+    // OSM tiles are free and require no API key — usage policy: tile.openstreetmap.org
     const tilePromises = [];
     for (let tx = originTile.x - 1; tx <= endTile.x + 1; tx++) {
       for (let ty = originTile.y - 1; ty <= endTile.y + 1; ty++) {
         (function(tx, ty) {
           const img = new Image();
           img.crossOrigin = 'anonymous';
-          const tileUrl = 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/' + zoom + '/' + tx + '/' + ty + '.png';
+          const tileUrl = 'https://tile.openstreetmap.org/' + zoom + '/' + tx + '/' + ty + '.png';
           const p = new Promise(function(resolve) {
             img.onload = function() {
-              const px = tx * TILE_SIZE - originTile.x * TILE_SIZE + offsetX;
-              const py = ty * TILE_SIZE - originTile.y * TILE_SIZE + offsetY;
-              ctx.drawImage(img, Math.round(px), Math.round(py), TILE_SIZE, TILE_SIZE);
+              const px = Math.round(tx * TILE_SIZE - originTile.x * TILE_SIZE + offsetX);
+              const py = Math.round(ty * TILE_SIZE - originTile.y * TILE_SIZE + offsetY);
+              // Apply dark treatment: draw to offscreen canvas, invert+desaturate, then composite
+              const off = document.createElement('canvas');
+              off.width = TILE_SIZE; off.height = TILE_SIZE;
+              const oc = off.getContext('2d');
+              oc.drawImage(img, 0, 0, TILE_SIZE, TILE_SIZE);
+              // Invert colours and reduce brightness to create dark map feel
+              const id = oc.getImageData(0, 0, TILE_SIZE, TILE_SIZE);
+              const d = id.data;
+              for (let i = 0; i < d.length; i += 4) {
+                // Invert
+                d[i]   = 255 - d[i];
+                d[i+1] = 255 - d[i+1];
+                d[i+2] = 255 - d[i+2];
+                // Desaturate towards grey (reduce colour intensity by 60%)
+                const avg = (d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114);
+                d[i]   = Math.round(d[i]   * 0.35 + avg * 0.65);
+                d[i+1] = Math.round(d[i+1] * 0.35 + avg * 0.65);
+                d[i+2] = Math.round(d[i+2] * 0.35 + avg * 0.65);
+                // Darken overall
+                d[i]   = Math.round(d[i]   * 0.72);
+                d[i+1] = Math.round(d[i+1] * 0.72);
+                d[i+2] = Math.round(d[i+2] * 0.72);
+              }
+              oc.putImageData(id, 0, 0);
+              ctx.drawImage(off, px, py, TILE_SIZE, TILE_SIZE);
               resolve();
+              // Redraw route on top after each tile loads so route is always visible
+              drawRouteTrack(ctx, W, H, dpr, zoom, originTile, TILE_SIZE, offsetX, offsetY);
             };
             img.onerror = function() { resolve(); };
           });
@@ -3093,14 +3124,11 @@ async function buildSessionChart(container, act, ftpW, isOutdoor) {
       }
     }
 
-    // Once tiles loaded (or failed), draw route on top
+    // Draw route immediately over dark background, then again after all tiles load
+    drawRouteTrack(ctx, W, H, dpr, zoom, originTile, TILE_SIZE, offsetX, offsetY);
     Promise.all(tilePromises).then(function() {
       drawRouteTrack(ctx, W, H, dpr, zoom, originTile, TILE_SIZE, offsetX, offsetY);
     });
-
-    // Also draw route immediately (in case tiles are cached / instant)
-    drawRouteTrack(ctx, W, H, dpr, zoom, originTile, TILE_SIZE, offsetX, offsetY);
-  }
 
   function drawRouteTrack(ctx, W, H, dpr, zoom, originTile, TILE_SIZE, offsetX, offsetY) {
     function toRX(lng) {
@@ -3146,7 +3174,7 @@ async function buildSessionChart(container, act, ftpW, isOutdoor) {
     // Attribution (OSM requirement)
     ctx.font = (9*dpr)+'px sans-serif';
     ctx.fillStyle = 'rgba(180,180,180,0.55)'; ctx.textAlign = 'right';
-    ctx.fillText('© OpenStreetMap contributors · Stadia Maps', W - 6, H - 6);
+    ctx.fillText('© OpenStreetMap contributors', W - 6, H - 6);
 
     // Route label
     ctx.font = '500 '+(9*dpr)+'px var(--mono,monospace)';
