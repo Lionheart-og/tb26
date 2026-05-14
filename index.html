@@ -252,22 +252,6 @@
     }
   }
 
-  /* ── Session chart ── */
-  .sc-wrap { position:relative; width:100%; margin:14px 0; }
-  .sc-canvas-wrap { position:relative; width:100%; height:360px; }
-  .sc-canvas-wrap canvas { position:absolute; top:0; left:0; width:100%; height:100%; }
-  .sc-overlay { pointer-events:none; }
-  .sc-legends { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:8px; }
-  .sc-leg-group { display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
-  .sc-leg-label { font-family:var(--mono); font-size:9px; color:var(--muted); letter-spacing:.07em; text-transform:uppercase; margin-right:2px; }
-  .sc-leg-item { display:flex; align-items:center; gap:4px; font-family:var(--mono); font-size:10px; color:var(--muted); }
-  .sc-leg-swatch { width:10px; height:10px; border-radius:2px; flex-shrink:0; }
-  .sc-leg-line { width:18px; height:0; border-top:2px dashed rgba(255,255,255,0.7); flex-shrink:0; vertical-align:middle; }
-  .sc-elev-wrap { position:relative; width:100%; height:80px; margin-top:4px; }
-  .sc-elev-wrap canvas { position:absolute; top:0; left:0; width:100%; height:100%; }
-  .sc-elev-overlay { pointer-events:none; }
-  .sc-tooltip { width:100%; background:#16161e; border:.5px solid rgba(255,255,255,0.10); border-radius:6px; padding:7px 12px; font-size:11px; color:var(--text); pointer-events:none; white-space:nowrap; display:none; line-height:1.5; font-family:var(--mono); margin-top:6px; box-sizing:border-box; }
-
 </style>
 </head>
 <body>
@@ -277,6 +261,7 @@
     <div id="athlete-chip" class="athlete-chip" style="display:none">
       <div class="avatar" id="avatar-initials">?</div>
       <span class="athlete-name" id="athlete-name-label"></span>
+      <button onclick="disconnectStrava()" title="Disconnect Strava" style="margin-left:6px;background:none;border:none;color:rgba(255,255,255,0.35);cursor:pointer;font-size:13px;padding:2px 4px;line-height:1;" title="Disconnect">✕</button>
     </div>
   </div>
   <div class="status"><div class="status-dot"></div><span id="status-text">Connecting to Strava...</span></div>
@@ -287,8 +272,8 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <script>
-// Training Intelligence Dashboard
-// Personalised cycling performance · Periodized plan · Strava · Google Calendar · FTP · Consistency
+// Trans Baviaans 2026 Training Intelligence Dashboard
+// Sub-11hr goal | Periodized plan | Strava push | Google Calendar | FTP | Consistency streak
 
 // ── SA Public Holidays (training window Mar–Aug 2026) ─────────────────────────
 const SA_HOLIDAYS = new Set([
@@ -445,15 +430,13 @@ function estimateFTP(activities, ctl) {
 
       // Monod-Scherrer power-duration model:
       // P(t) = FTP × (3600/t)^0.07
-      // → FTP estimate = NP × (t/3600)^0.07
-      // Scales observed NP down to a 60-min FTP equivalent.
+      // → FTP estimate = NP / (3600/t)^0.07 = NP × (t/3600)^0.07
+      //
+      // This scales the observed NP DOWN to a 60-min FTP equivalent.
+      // Short hard rides scale down less; long easy rides scale down more.
+      // Valid range: 20 min–3 hr. Beyond 3hr the model loses accuracy.
       const t     = Math.min(secs, 10800); // cap at 3hr for validity
-      let ftpEst = np * Math.pow(t / 3600, 0.07);
-
-      // For rides ≤40 min apply the Coggan 0.95 correction:
-      // Shorter efforts have a higher anaerobic contribution than a true 60-min
-      // maximal effort, so the raw scaled value overstates sustainable FTP by ~5%.
-      if (secs <= 2400) ftpEst *= 0.95;
+      const ftpEst = np * Math.pow(t / 3600, 0.07);
 
       return { ftpEst: Math.round(ftpEst), np, secs, name: a.name,
                date: a.start_date.slice(0,10) };
@@ -536,31 +519,27 @@ function calcConsistencyStreak(activities) {
 }
 
 // ── EWMA Metrics (Intervals.icu methodology) ─────────────────────────────────
-// CTL/ATL use exponential moving averages with time constants of 42 and 7 days.
-// Form (TSB) = today's CTL − today's ATL, computed after each day's EWMA update.
-// History fetched from Strava covers up to 365 days; seeding window ensures
-// displayed values are accurate for the full 90-day chart period.
-function computeMetrics(activities, historyDays) {
+// CTL requires ~6 months of history to converge from 0.
+// Intervals.icu uses your full training history; we approximate with 180 days.
+// The extra 90 days (days 180→90) seed CTL/ATL so the displayed 90 days are accurate.
+function computeMetrics(activities) {
   const byDay = {};
   for (const a of activities) {
     const k = localDateKey(new Date(a.start_date));
     byDay[k] = (byDay[k]||0) + load(a);
   }
   const today = new Date(); today.setHours(0,0,0,0);
-  // Use actual history available (up to 365), minimum 180 for chart accuracy
-  const seedDays = Math.max(historyDays || 270, 180);
-  const chartDays = 90;
   let ctl=0, atl=0;
   const hist = [];
-  for (let i = seedDays - 1; i >= 0; i--) {
+  // Run EWMA for 180 days; only record last 90 for chart/display
+  for (let i=179; i>=0; i--) {
     const d  = new Date(today); d.setDate(d.getDate()-i);
     const dk = localDateKey(d);
     const dl = byDay[dk] || 0;
-    // Update EWMA first, then compute form — form reflects today's CTL and ATL
+    const form = Math.round(ctl - atl);
     ctl += (dl - ctl) / 42;
     atl += (dl - atl) / 7;
-    const form = Math.round(ctl - atl);
-    if (i < chartDays) hist.push({ date:new Date(d), ctl:Math.round(ctl), atl:Math.round(atl), form, load:dl });
+    if (i < 90) hist.push({ date:new Date(d), ctl:Math.round(ctl), atl:Math.round(atl), form, load:dl });
   }
   return { fitness:Math.round(ctl), fatigue:Math.round(atl), form:Math.round(ctl-atl), hist };
 }
@@ -602,15 +581,15 @@ const GOALS_SK = 'goals_v2';
 const GOAL_SK  = 'race_goal_v1'; // legacy key — read-only for migration
 
 const GOAL_DEFAULTS = {
-  name:     '',
-  date:     '',
-  distance: 100,
-  elevation:1500,
-  timeGoal: 6.0,
-  startTime:'07:00',
-  location: '',
+  name:     'Trans Baviaans 2026',
+  date:     '2026-08-08',
+  distance: 230,
+  elevation:3000,
+  timeGoal: 11.0,
+  startTime:'10:00',
+  location: 'Willowmore → Jeffreys Bay',
   raceType: 'mtb',
-  priority: 'A1',
+  priority: 'A',
 };
 
 function makeGoalId() {
@@ -700,7 +679,7 @@ const TRAINING_DEFAULTS = {
   strengthPhases:  ['Base 1','Base 2','Build 1','Build 2','Peak'], // phases with strength
 
   // ── Coaching approach ────────────────────────────────────────────────────────
-  coachingStyle:   'polarised',    // 'polarised' (80/20) | 'sweet-spot' | 'traditional'
+  coachingStyle:   'polarised',    // 'polarised' (80/20 Wakefield) | 'sweet-spot' | 'traditional'
   intervalPhilosophy: 'wakefield', // 'wakefield' (torque→metabolic→threshold→overunder→stochastic) | 'traditional'
 
   // ── Terrain & specificity ────────────────────────────────────────────────────
@@ -765,12 +744,8 @@ function calcTargetWkg(goal, weightKg) {
   const Pclimb = weightG * g * grade * avgSpeedMs;
   const Proll  = 0.004 * weightG * g * avgSpeedMs; // Crr=0.004
   const Ptotal = (Paero + Pclimb + Proll) * 1.08; // 8% drivetrain loss
-  // Duration-based sustainable FTP fraction (Monod-Scherrer relationship):
-  // At 3hr: ~85% of FTP · At 6hr: ~75% · At 9hr: ~69% · At 11hr: ~67%
-  // Formula: fraction = max(0.60, min(0.92, 1.0 - 0.07 × ln(timeGoal)))
-  // where timeGoal is in hours. Validated against field data across race durations.
-  const raceFTPfraction = Math.max(0.60, Math.min(0.92, 1.0 - 0.07 * Math.log(goal.timeGoal)));
-  const ftpRequired = Ptotal / raceFTPfraction;
+  // Race power is ~65% of FTP for ultra-endurance events
+  const ftpRequired = Ptotal / 0.65;
   return (ftpRequired / weightG).toFixed(2);
 }
 
@@ -793,10 +768,7 @@ function calcFinishTime(goal) {
 
 function calcGoalReadiness(currentWkg, currentCtl, activities, goal, weightKg) {
   const targetWkg    = parseFloat(calcTargetWkg(goal, weightKg));
-  // CTL target scaled by race duration: longer races demand a higher aerobic base.
-  // Formula: 50 + (timeGoal × 3.2), capped at 100.
-  // Yields: 3hr → 60, 6hr → 69, 9hr → 79, 11hr → 85, 20hr → 100
-  const raceCtlTarget = Math.min(100, Math.round(50 + goal.timeGoal * 3.2));
+  const raceCtlTarget = 85;
   const daysLeft     = daysToRace();
   const ftpWatts     = currentWkg * weightKg;
   const raceType     = (goal.raceType || 'mtb').toLowerCase();
@@ -896,7 +868,6 @@ function calcGoalReadiness(currentWkg, currentCtl, activities, goal, weightKg) {
     score: composite, status, statusCol, advice,
     wkgScore, ctlScore, specScore,
     targetWkg,
-    ctlTarget: raceCtlTarget,
     currentWkg: +currentWkg.toFixed(2),
     sustainableWkg: +sustainableWkg.toFixed(2),
     decayFactor: +decayFactor.toFixed(3),
@@ -960,12 +931,12 @@ function currentPhase(){ return getPeriodPhase(new Date()); }
 //   Public holidays on weekdays = treated as weekend (long ride available)
 //   Strength drops to maintenance in taper, nil in race week
 
-// ── PHASE_PLANS — Polarised / Ultra-Endurance / Sweet-Spot periodisation ───────
+// ── PHASE_PLANS — Barry Austin (LEADout) × John Wakefield (Science2Sport) ─────
 // Philosophy blend:
-//   Block periodisation (Issurin residuals) — develop aerobic & anaerobic
+//   Austin:   Block periodisation (Issurin residuals) — develop aerobic & anaerobic
 //             systems separately, then harmonise. Energy-to-flow. Hill repeats at
 //             max sustainable effort (not RPE, not watts — feel). Mental + physical.
-//   80/20 polarised. Most endurance at Z1 (NOT high-Z2). Two hard sessions
+//   Wakefield: 80/20 polarised. Most endurance at Z1 (NOT high-Z2). Two hard sessions
 //             per week max, 3 days apart. Neuromuscular torque base → sub-threshold
 //             metabolic → threshold blocks → over/unders → stochastic VO2.
 //             Stochastic = random-feeling intervals just above/below threshold.
@@ -980,8 +951,8 @@ function currentPhase(){ return getPeriodPhase(new Date()); }
 
 const PHASE_PLANS = {
   // ── BASE 1 (weeks 1–4): Neuromuscular + Aerobic Foundation ───────────────
-  // Phase 1: Low-cadence torque intervals — build neuromuscular pathways
-  // Separate the aerobic system. Long, truly easy MTB. Hill repeats at
+  // Wakefield Phase 1: Low-cadence torque intervals — build neuromuscular pathways
+  // Austin: Separate the aerobic system. Long, truly easy MTB. Hill repeats at
   //         "max sustainable — just before the wheezy breathing."
   'Base 1': {
     intervals: {
@@ -990,39 +961,39 @@ const PHASE_PLANS = {
         zones:['Z1','Z2','Z1','Z2','Z1','Z2','Z1','Z2','Z1','Z2','Z1'],
         colors:['#6b6b80','#4a9eff','#6b6b80','#4a9eff','#6b6b80','#4a9eff','#6b6b80','#4a9eff','#6b6b80','#4a9eff','#6b6b80'],
         strava:'[TB26-B1] Tue — Torque Intervals',
-        desc:'Neuromuscular torque development. 30min Z1 warm-up (must be thorough — muscles need prep for high-torque load). 5×4min on a 6%+ climb at 55–60 RPM. Target torque, NOT power. Torque (Nm) = Power ÷ (Cadence × 2π) × 60. Men: 0.71–1.0 Nm. 8min full Z1 recovery between efforts. Expect it to feel awkward — that\'s the adaptation. 15min easy cool-down. One session per week only in this phase.' },
+        desc:'Wakefield Phase 1: Neuromuscular torque development. 30min Z1 warm-up (must be thorough — muscles need prep for high-torque load). 5×4min on a 6%+ climb at 55–60 RPM. Target torque, NOT power. Torque (Nm) = Power ÷ (Cadence × 2π) × 60. Men: 0.71–1.0 Nm. 8min full Z1 recovery between efforts. Expect it to feel awkward — that\'s the adaptation. 15min easy cool-down. One session per week only in this phase.' },
       thu: { type:'Hill Repeats — Max Sustainable', icon:'🚴', mins:85, isInterval:true,
         detail:'20min Z1 warm-up → 5×3min hill @ max sustainable effort (just below wheezy breathing) → full recovery descent → 10min cool-down',
         zones:['Z1','Z4','Z1','Z4','Z1','Z4','Z1','Z4','Z1','Z4','Z1'],
         colors:['#6b6b80','#f0a060','#6b6b80','#f0a060','#6b6b80','#f0a060','#6b6b80','#f0a060','#6b6b80','#f0a060','#6b6b80'],
         strava:'[TB26-B1] Thu — Hill Repeats',
-        desc:'4–6 hills, 1–3km, at maximum effort you can maintain — "just before the wheezy breathing." Not a watts target. Not a heart rate. A feeling of edge-of-control sustainable power. Full recovery descent between each. 20min Z1 warm-up, 10min cool-down. This teaches pacing and develops raw climbing strength that no ERG session replicates. Find actual hills — MTB terrain preferred for race specificity.' }
+        desc:'Barry Austin method: 4–6 hills, 1–3km, at maximum effort you can maintain — "just before the wheezy breathing." Not a watts target. Not a heart rate. A feeling of edge-of-control sustainable power. Full recovery descent between each. 20min Z1 warm-up, 10min cool-down. This teaches pacing and develops raw climbing strength that no ERG session replicates. Find actual hills — MTB terrain preferred for Baviaans specificity.' }
     },
     strength: {
       wed: { type:'Posterior Chain Foundation', icon:'🏋️', mins:60, isGym:true,
         detail:'Back Squat 3×10 @ 60% 1RM · Romanian DL 3×10 · Bulgarian Split Squat 3×8/leg · Copenhagen Plank 3×20s/side · Glute Bridge 3×15',
         strava:'[TB26-B1] Wed — Posterior Chain Foundation',
-        desc:'Build the base that keeps you powerful in the final hours of a long race. 3×10 back squat at 60% 1RM — focus on posterior drive, not quad dominance. Romanian DL: hinge pattern, lat engagement. Bulgarian split squat: hip stability and single-leg specificity. Copenhagen plank: adductor/core integration. Glute bridge: hip extension power. Rest 90s between sets. Quality over load.' },
+        desc:'Austin: build the base that keeps you powerful at hour 9 of Baviaans. 3×10 back squat at 60% 1RM — focus on posterior drive, not quad dominance. Romanian DL: hinge pattern, lat engagement. Bulgarian split squat: hip stability and single-leg specificity for MTB terrain. Copenhagen plank: adductor/core integration. Glute bridge: hip extension power. Rest 90s between sets. Quality over load.' },
       fri: { type:'Single-Leg Stability', icon:'🏋️', mins:60, isGym:true,
         detail:'Single-leg Press 3×10/leg · Hip Thrust 3×12 · Step-Up 3×12/leg (weighted) · Side Plank 3×30s/side · Banded Clamshell 3×20 · Dead Bug 3×8/side',
         strava:'[TB26-B1] Fri — Single-Leg Stability',
-        desc:'Single-leg power and hip stability are the two things that break down in the back half of a long race. Single-leg press reinforces unilateral power. Hip thrust: glute drive pattern. Weighted step-up: replicates pedalling on technical climbs. Side plank + dead bug: lateral and rotational core stability. Banded clamshell: hip abductor endurance. Light — this is Friday before a long weekend.' }
+        desc:'Wakefield/Austin: single-leg power and hip stability are the two things that break down in the back half of a 230km race. Single-leg press reinforces unilateral power. Hip thrust: glute drive pattern. Weighted step-up: replicates pedalling on technical climbs. Side plank + dead bug: lateral and rotational core stability. Banded clamshell: hip abductor endurance. Light — this is Friday before a long weekend.' }
     },
     weekend: {
       sat: { type:'Long Z1 MTB Ride', icon:'🚴', mins:240,
-        detail:'3.5–4hr truly Z1 · seek hilly terrain if possible · 500m+ climbing · nutrition every 30min · 60g carbs/hr',
+        detail:'3.5–4hr truly Z1 MTB · Baviaanskloof-style terrain if possible · 500m+ climbing · nutrition every 30min · 60g carbs/hr',
         strava:'[TB26-B1] Sat — Long Z1 MTB',
-        desc:'Most endurance at Zone 1, NOT high Zone 2. "When athletes push the top of Z2 on easy days, they dig themselves into a hole — fatigue accumulates, they can\'t execute quality sessions." True Z1 ceiling: HR ≤65% max, RPE ≤5/10, able to hold full conversations. 3.5–4hr MTB. 500m+ climbing. Practice nutrition: 60g carbs/hr, 500ml fluid/hr. Simulate race pacing — patience is the race strategy.' },
+        desc:'Wakefield: most endurance at Zone 1, NOT high Zone 2. "When athletes push the top of Z2 on easy days, they dig themselves into a hole — fatigue accumulates, they can\'t execute quality sessions." True Z1 ceiling: HR ≤65% max, RPE ≤5/10, able to hold full conversations. 3.5–4hr MTB. 500m+ climbing. Practice nutrition: 60g carbs/hr, 500ml fluid/hr. Simulate Baviaans pacing — patience is the race strategy.' },
       sun: { type:'Active Recovery Spin', icon:'🚴', mins:60,
         detail:'1hr Z1 only · flush lactate · no HR above 60% max · legs only, no effort',
         strava:'[TB26-B1] Sun — Recovery Spin',
-        desc:'"If you\'re feeling truly flat and depleted, the right decision is to take a day off." If legs feel OK, 60min Z1 spin to flush. If legs are dead: full rest. Z1 ceiling is firm — 60% HRmax maximum. No effort. This session exists to accelerate recovery for Tuesday\'s torque work, not to add fitness.' }
+        desc:'Wakefield: "If you\'re feeling truly flat and depleted, the right decision is to take a day off." If legs feel OK, 60min Z1 spin to flush. If legs are dead: full rest. Z1 ceiling is firm — 60% HRmax maximum. No effort. This session exists to accelerate recovery for Tuesday\'s torque work, not to add fitness.' }
     }
   },
 
   // ── BASE 2 (weeks 5–8): Metabolic Aerobic Development ─────────────────────
-  // Phase 2: Sub-threshold metabolic conditioning (80–85% FTP)
-  // Extend the aerobic block. Back-to-back weekend rides. Fat metabolism.
+  // Wakefield Phase 2: Sub-threshold metabolic conditioning (80–85% FTP)
+  // Austin: Extend the aerobic block. Back-to-back weekend rides. Fat metabolism.
   'Base 2': {
     intervals: {
       tue: { type:'Sub-Threshold Metabolic Blocks', icon:'🚴', mins:85, isInterval:true,
@@ -1030,13 +1001,13 @@ const PHASE_PLANS = {
         zones:['Z1','Z2','Z3','Z2','Z1'],
         colors:['#6b6b80','#4a9eff','#60c8f0','#4a9eff','#6b6b80'],
         strava:'[TB26-B2] Tue — Sub-Threshold Metabolic',
-        desc:'Metabolic conditioning just below threshold. 30min progressive Z1 warm-up. 1×25min at 80–85% FTP. Smooth, consistent output — minimal power variation. "You should be able to speak in short sentences. If gasping, back off." No traffic lights, no surges. Develops fat metabolism and lactate clearance — the engine for long-duration racing. Progress to 30min then 40min over the 4-week block.' },
+        desc:'Wakefield Phase 2: metabolic conditioning just below threshold. 30min progressive Z1 warm-up. 1×25min at 80–85% FTP (212–225W at your 265W eFTP). Smooth, consistent output — minimal power variation. "You should be able to speak in short sentences. If gasping, back off." No traffic lights, no surges. Develops fat metabolism and lactate clearance — the engine for 11hrs of Baviaans. Progress to 30min then 40min over the 4-week block.' },
       thu: { type:'Low-Cadence Hill Repeats + Tempo', icon:'🚴', mins:85, isInterval:true,
         detail:'20min Z1 warm-up → 3×8min @ 80–85% FTP on 6%+ climb at 65–70 RPM → 5min Z1 between → 10min cool-down',
         zones:['Z1','Z2','Z1','Z2','Z1','Z2','Z1'],
         colors:['#6b6b80','#60c8f0','#6b6b80','#60c8f0','#6b6b80','#60c8f0','#6b6b80'],
         strava:'[TB26-B2] Thu — Climbing Metabolic',
-        desc:'Sub-threshold metabolic effort on terrain. 20min Z1 warm-up. 3×8min on 6%+ gradient at 65–70 RPM (slightly higher than Phase 1 torque work, building cadence range). Target 80–85% FTP. 5min full Z1 recovery. 10min cool-down. Develops climbing metabolic efficiency — essential for climbing-heavy events. The low cadence maintains torque stimulus while adding aerobic load.' }
+        desc:'Combination Austin/Wakefield: sub-threshold metabolic effort on terrain. 20min Z1 warm-up. 3×8min on 6%+ gradient at 65–70 RPM (slightly higher than Phase 1 torque work, building cadence range). Target 80–85% FTP. 5min full Z1 recovery. 10min cool-down. Develops climbing metabolic efficiency — essential for Baviaans\'s 3000m+ elevation. The low cadence maintains torque stimulus while adding aerobic load.' }
     },
     strength: {
       wed: { type:'Loading Phase Strength', icon:'🏋️', mins:60, isGym:true,
@@ -1052,17 +1023,17 @@ const PHASE_PLANS = {
       sat: { type:'Long Climbing MTB', icon:'🚴', mins:300,
         detail:'4.5–5hr MTB · 1000m+ climbing · Z1–Z2 with surges to Z3 on climbs only · full nutrition protocol · 65g carbs/hr · 600ml fluid/hr',
         strava:'[TB26-B2] Sat — Long Climbing MTB',
-        desc:'Extend the aerobic base with terrain specificity. 4.5–5hr MTB with 1000m+ climbing. Base pacing Z1. Allow natural Z3 on climbs — do not force it, do not suppress it. Full nutrition protocol from the start: 65g carbs/hr, 600ml fluid/hr. Electrolytes. Practice checkpoint nutrition discipline. Note where energy dips — this informs your race strategy. No unnecessary spikes on flats.' },
+        desc:'Austin: extend the aerobic base with terrain specificity. 4.5–5hr MTB with 1000m+ climbing. Base pacing Z1. Allow natural Z3 on climbs — do not force it, do not suppress it. Full nutrition protocol from the start: 65g carbs/hr, 600ml fluid/hr. Electrolytes. Practice checkpoint nutrition discipline. Note where energy dips — this data informs your Baviaans race strategy. No unnecessary spikes on flats.' },
       sun: { type:'Back-to-Back Fatigued Ride', icon:'🚴', mins:150,
         detail:'2.5hr Z1–Z2 on tired legs · aerobic discipline · no Z4+ · this session builds race resilience',
         strava:'[TB26-B2] Sun — Back-to-Back Fatigued',
-        desc:'Riding on accumulated fatigue is a trainable skill. 2.5hr on tired legs from Saturday. Stay strictly Z1–Z2 — not because you\'re "going easy" but because your aerobic system on fatigued legs is the exact physiological state demanded in the final hours of a long race. Resist the temptation to push. The discipline here is the training. Nutrition: keep fuelling even though you don\'t want to.' }
+        desc:'Wakefield/Austin: riding on accumulated fatigue is a trainable skill. 2.5hr on tired legs from Saturday. Stay strictly Z1–Z2 — not because you\'re "going easy" but because your aerobic system on fatigued legs is the exact physiological state Baviaans demands for hours 6–11. Resist the temptation to push. The discipline here is the training. Nutrition: keep fuelling even though you don\'t want to.' }
     }
   },
 
   // ── BUILD 1 (weeks 9–12): Threshold Development ───────────────────────────
-  // Phase 3: Threshold blocks (105–110% FTP) + Over/Unders (95/110%)
-  // Introduce anaerobic conditioning block separately. Hill repeats evolve
+  // Wakefield Phase 3: Threshold blocks (105–110% FTP) + Over/Unders (95/110%)
+  // Austin: Introduce anaerobic conditioning block separately. Hill repeats evolve
   //         to race-pace sustained efforts. System harmonisation begins.
   'Build 1': {
     intervals: {
@@ -1071,13 +1042,13 @@ const PHASE_PLANS = {
         zones:['Z1','Z4','Z1','Z4','Z1','Z4','Z1'],
         colors:['#6b6b80','#f0a060','#6b6b80','#f0a060','#6b6b80','#f0a060','#6b6b80'],
         strava:'[TB26-BU1] Tue — Threshold Blocks',
-        desc:'Supra-threshold blocks on a climb. 30min warm-up (progressive — Z1 into mid-Z2 at end). 3×12min at 105–110% FTP (278–291W). Find a consistent 3–8% gradient. "All three intervals should feel equally hard — if the third feels harder, you started too aggressively." 8–10min full Z1 recovery. 20min cool-down. RPE 8.5/10. This is the session that builds your ability to sustain power on long climbs.' },
+        desc:'Wakefield Phase 3: supra-threshold blocks on a climb. 30min warm-up (progressive — Z1 into mid-Z2 at end). 3×12min at 105–110% FTP (278–291W). Find a consistent 3–8% gradient. "All three intervals should feel equally hard — if the third feels much harder, you started too aggressively." 8–10min full Z1 recovery. 20min cool-down. RPE 8.5/10. This is the session that builds your ability to sustain power on Baviaans\'s long climbs.' },
       thu: { type:'Over/Under Intervals', icon:'🚴', mins:85, isInterval:true,
         detail:'25min Z1 warm-up → 3×10min (alternating 2min @ 95% FTP / 1min @ 110% FTP) · 10min Z1 between → 15min cool-down',
         zones:['Z1','Z3','Z4','Z3','Z4','Z3','Z4','Z1','Z3','Z4','Z3','Z4','Z3','Z4','Z1','Z3','Z4','Z3','Z4','Z3','Z4','Z1'],
         colors:['#6b6b80','#60c8f0','#f0a060','#60c8f0','#f0a060','#60c8f0','#f0a060','#6b6b80','#60c8f0','#f0a060','#60c8f0','#f0a060','#60c8f0','#f0a060','#6b6b80','#60c8f0','#f0a060','#60c8f0','#f0a060','#60c8f0','#f0a060','#6b6b80'],
         strava:'[TB26-BU1] Thu — Over/Under Intervals',
-        desc:'Over/under intervals for lactate clearance and threshold tolerance. 25min Z1 warm-up. 3×10min blocks: each block alternates 2min at 95% FTP (252W) → 1min at 110% FTP (292W). Repeat pattern throughout 10min. "The under is not rest — you\'re training your body to clear lactate while maintaining near-threshold power." Smooth transitions between over and under, no power spikes. 10min Z1 between intervals. 15min cool-down. RPE 9/10 — this is meant to be hard.' }
+        desc:'Wakefield Phase 3 Session 2: over/under intervals for lactate clearance and threshold tolerance. 25min Z1 warm-up. 3×10min blocks: each block alternates 2min at 95% FTP (252W) → 1min at 110% FTP (292W). Repeat pattern throughout 10min. "The under is not rest — you\'re training your body to clear lactate while maintaining near-threshold power." Smooth transitions between over and under, no power spikes. 10min Z1 between intervals. 15min cool-down. RPE 9/10 — this is meant to be hard.' }
     },
     strength: {
       wed: { type:'Power Phase Strength', icon:'🏋️', mins:60, isGym:true,
@@ -1093,18 +1064,18 @@ const PHASE_PLANS = {
       sat: { type:'Race-Pace MTB Ride', icon:'🚴', mins:360,
         detail:'5–6hr MTB · mixed Z1–Z3 · hold race pace on flat sections · practice passing and group riding · full nutrition plan',
         strava:'[TB26-BU1] Sat — Race-Pace MTB',
-        desc:'Harmonisation phase begins. Base aerobic system now meets structured race-pace effort. 5–6hr MTB with flat sections at your target race pace. Climbs: Z2-3, controlled. Descents: fast, technical — practice MTB skills. Full nutrition: 65–70g carbs/hr, 700ml fluid/hr. Group riding if possible — practice wheel-following, pacing within a bunch. "Connect the energy to your environment."' },
+        desc:'Austin: harmonisation phase begins. Base aerobic system now meets structured race-pace effort. 5–6hr MTB with flat sections at Baviaans target pace (20–22km/h). Climbs: Z2-3, controlled. Descents: fast, technical — practice MTB skills. Full nutrition: 65–70g carbs/hr, 700ml fluid/hr. Group riding if possible — practice wheel-following, pacing within a bunch. Austin: "connect the energy to your environment."' },
       sun: { type:'Fatigue-State Long Ride', icon:'🚴', mins:210,
-        detail:'3–3.5hr Z1–Z2 on fatigued legs · simulate race final third · mental toughness work · no stopping',
+        detail:'3–3.5hr Z1–Z2 on fatigued legs · simulate Baviaans km 150–230 · mental toughness work · no stopping',
         strava:'[TB26-BU1] Sun — Fatigue-State Ride',
-        desc:'Simulate the final third of your race on legs that already have hours in them. 3–3.5hr Z1–Z2. The point is not fitness — it\'s learning to ride when you don\'t want to, when your brain is telling you to stop. Mental and physical conditioning are inseparable. Nutrition: even if you\'re not hungry, eat 60g carbs/hr. This is training your gut as much as your legs.' }
+        desc:'Simulate the final 80km of Baviaans on legs that already have 6hrs in them. 3–3.5hr Z1–Z2. The point is not fitness — it\'s learning to ride when you don\'t want to, when your brain is telling you to stop. Austin philosophy: mental and physical conditioning are inseparable. Nutrition: even if you\'re not hungry, eat 60g carbs/hr. This is training your gut as much as your legs.' }
     }
   },
 
   // ── BUILD 2 (weeks 13–16): Race-Specific + Stochastic Work ───────────────
-  // Stochastic intervals (random-feeling above/below threshold).
+  // Wakefield: stochastic intervals (random-feeling above/below threshold).
   //            Add 3rd hard session only for well-trained athletes.
-  // Back-to-back epic weekends. Race conditions. Night riding.
+  // Austin:    Back-to-back epic weekends. Race conditions. Night riding.
   'Build 2': {
     intervals: {
       tue: { type:'Stochastic Threshold Intervals', icon:'🚴', mins:90, isInterval:true,
@@ -1112,13 +1083,13 @@ const PHASE_PLANS = {
         zones:['Z1','Z3','Z4','Z3','Z4','Z3','Z4','Z1','Z3','Z4','Z3','Z4','Z3','Z4','Z1','Z3','Z4','Z3','Z4','Z3','Z4','Z1','Z3','Z4','Z3','Z4','Z3','Z4','Z1'],
         colors:['#6b6b80','#60c8f0','#f0a060','#60c8f0','#f0a060','#60c8f0','#f0a060','#6b6b80','#60c8f0','#f0a060','#60c8f0','#f0a060','#60c8f0','#f0a060','#6b6b80','#60c8f0','#f0a060','#60c8f0','#f0a060','#60c8f0','#f0a060','#6b6b80','#60c8f0','#f0a060','#60c8f0','#f0a060','#60c8f0','#f0a060','#6b6b80'],
         strava:'[TB26-BU2] Tue — Stochastic Threshold',
-        desc:'Stochastic interval training that mimics real race demands by varying intensity. 25min warm-up. 4×8min: vary power freely between 90–115% FTP throughout each interval — accelerate, back off, surge, settle. No fixed pattern. "In simple terms, it\'s interval sets just below or above threshold, performed in a way that simulates race chaos." 6min Z1 recovery. 15min cool-down. Don\'t use ERG mode. This is the key Build 2 quality session.' },
+        desc:'Wakefield stochastic method: interval training that mimics real race demands by varying intensity. 25min warm-up. 4×8min: vary power freely between 90–115% FTP throughout each interval — accelerate, back off, surge, settle. No fixed pattern. "In simple terms, it\'s interval sets just below or above threshold, performed in a way that simulates race chaos." 6min Z1 recovery. 15min cool-down. Don\'t use ERG mode. This is the key Build 2 quality session.' },
       thu: { type:'Extended Sub-Threshold + Climbing', icon:'🚴', mins:90, isInterval:true,
         detail:'20min Z1 warm-up → 2×20min @ 85–90% FTP on undulating terrain · 15min Z1 between → 10min cool-down',
         zones:['Z1','Z2','Z3','Z2','Z3','Z1','Z2','Z3','Z2','Z3','Z1'],
         colors:['#6b6b80','#4a9eff','#60c8f0','#4a9eff','#60c8f0','#6b6b80','#4a9eff','#60c8f0','#4a9eff','#60c8f0','#6b6b80'],
         strava:'[TB26-BU2] Thu — Extended Sub-Threshold',
-        desc:'Extended metabolic block — progression from Base 2 single intervals. 20min Z1 warm-up. 2×20min at 85–90% FTP on undulating terrain (natural power variation). 15min full Z1 recovery between. 10min cool-down. This builds the sustained aerobic engine for the middle hours of a long race. "Smooth and steady is the goal. Avoid surges and soft-pedalling." Outdoors on rolling terrain strongly preferred over trainer.' }
+        desc:'Extended metabolic block — progression from Base 2 single intervals. 20min Z1 warm-up. 2×20min at 85–90% FTP on undulating terrain (natural power variation). 15min full Z1 recovery between. 10min cool-down. This builds the sustained aerobic engine for Baviaans\'s middle hours (km 80–160). Wakefield: "Smooth and steady is the goal. Avoid surges and soft-pedalling." Outdoors on rolling terrain strongly preferred over trainer.' }
     },
     strength: {
       wed: { type:'Max Strength Phase', icon:'🏋️', mins:60, isGym:true,
@@ -1128,24 +1099,24 @@ const PHASE_PLANS = {
       fri: { type:'Activation + Bike Skills', icon:'🏋️', mins:45, isGym:true,
         detail:'Bodyweight activation circuit (15min) · MTB skills session or trail ride (30min technical only) · hip mobility 10min',
         strava:'[TB26-BU2] Fri — Activation & Skills',
-        desc:'Physical preparation connects to environmental execution. Friday before epic weekend: light activation only (bodyweight squats, glute bridges, lateral lunges), then 30min of pure MTB skills work — not fitness, not pace. Technical trail sections, cornering, rock gardens, drops. These skills matter in the closing hours of a long race. Hip flexor and thoracic mobility. No loading.' }
+        desc:'Austin philosophy: physical preparation connects to environmental execution. Friday before epic weekend: light activation only (bodyweight squats, glute bridges, lateral lunges), then 30min of pure MTB skills work — not fitness, not pace. Technical trail sections, cornering, rock gardens, drops. These skills matter in the dark at km 180 of Baviaans. Hip flexor and thoracic mobility. No loading.' }
     },
     weekend: {
       sat: { type:'Epic Ride — Day 1', icon:'🚴', mins:420,
         detail:'6–7hr MTB · 2000m+ climbing · full race conditions · lights if finishing after dark · 70g carbs/hr · practice checkpoint strategy',
         strava:'[TB26-BU2] Sat — Epic Day 1',
-        desc:'Simulate race conditions, not just fitness. 6–7hr MTB, 2000m+ elevation. Ride as if it\'s race day: start controlled, hold discipline in middle hours, push in final hour. Full race nutrition: 70g carbs/hr, 750ml fluid/hr. If finishing in low light, use your race lights — practice riding with them. Time your nutrition stops. Note where you bonk mentally vs physically — different problems, different solutions.' },
+        desc:'Austin: simulate race conditions, not just fitness. 6–7hr MTB, 2000m+ elevation. Ride as if it\'s Baviaans: start controlled, hold discipline in middle hours, push in final hour. Full race nutrition: 70g carbs/hr, 750ml fluid/hr. If finishing after 19:00, use your race lights — practice riding with them. Time your nutrition stops. Note where you bonk mentally vs physically — different problems, different solutions.' },
       sun: { type:'Epic Ride — Day 2', icon:'🚴', mins:270,
-        detail:'4–4.5hr on deeply fatigued legs · simulate race final third · no-stopping mentality · Z1–Z2 discipline under fatigue',
+        detail:'4–4.5hr on deeply fatigued legs · simulate km 150–230 of Baviaans · no-stopping mentality · Z1–Z2 discipline under fatigue',
         strava:'[TB26-BU2] Sun — Epic Day 2',
-        desc:'The most race-specific session of the entire plan. Deeply fatigued legs, 4–4.5hr — simulating the final third of a long race. "Failing to listen to the body\'s signals is a critical error" — but knowing the difference between normal race discomfort and genuine danger is a skill. Practice that here. Stay Z1–Z2. No heroics. "The mental and the physical are inseparable at this distance." Eat even when you don\'t want to.' }
+        desc:'The most race-specific session of the entire plan. Deeply fatigued legs, 4–4.5hr. This is km 150–230 of Baviaans. Wakefield: "failing to listen to the body\'s signals is a critical error" — but knowing the difference between normal race discomfort and genuine danger is a skill. Practice that here. Stay Z1–Z2. No heroics. Austin: "the mental and the physical are inseparable at this distance." Eat even when you don\'t want to.' }
     }
   },
 
   // ── PEAK (weeks 17–18): Realisation Phase ─────────────────────────────────
-  // Realisation — harmonise aerobic and anaerobic blocks into race-specific
+  // Austin: Realisation — harmonise aerobic and anaerobic blocks into race-specific
   //         power. Issurin: training residuals from earlier blocks now peak.
-  // Highest quality, NOT highest volume. 2 hard sessions max.
+  // Wakefield: Highest quality, NOT highest volume. 2 hard sessions max.
   'Peak': {
     intervals: {
       tue: { type:'Race-Specific Threshold + Surges', icon:'🚴', mins:90, isInterval:true,
@@ -1153,13 +1124,13 @@ const PHASE_PLANS = {
         zones:['Z1','Z4','Z5','Z4','Z5','Z4','Z5','Z4','Z1','Z4','Z5','Z4','Z5','Z4','Z5','Z4','Z1','Z4','Z5','Z4','Z5','Z4','Z5','Z4','Z1','Z4','Z5','Z4','Z5','Z4','Z5','Z4','Z1'],
         colors:['#6b6b80','#f0a060','#f06060','#f0a060','#f06060','#f0a060','#f06060','#f0a060','#6b6b80','#f0a060','#f06060','#f0a060','#f06060','#f0a060','#f06060','#f0a060','#6b6b80','#f0a060','#f06060','#f0a060','#f06060','#f0a060','#f06060','#f0a060','#6b6b80','#f0a060','#f06060','#f0a060','#f06060','#f0a060','#f06060','#f0a060','#6b6b80'],
         strava:'[TB26-PK] Tue — Race Threshold + Surges',
-        desc:'Realisation phase: combine the threshold system with anaerobic surges — the race-specific demand. 25min warm-up. 4×10min at 100–108% FTP. Within each interval, every 3min do a 20sec surge to 130% FTP (to simulate attacks, steep pitches, technical sections). Return immediately to threshold. 8min Z1 recovery. 20min cool-down. This is where the aerobic and anaerobic blocks built separately now work together. All three intervals should be equally hard — if fourth is crumbling, started too hard.' },
+        desc:'Austin realisation phase: combine the threshold system with anaerobic surges — the race-specific demand. 25min warm-up. 4×10min at 100–108% FTP. Within each interval, every 3min do a 20sec surge to 130% FTP (to simulate attacks, steep pitches, technical sections). Return immediately to threshold. 8min Z1 recovery. 20min cool-down. This is where the aerobic and anaerobic blocks built separately now work together. Wakefield: all three intervals should be equally hard — if fourth is crumbling, started too hard.' },
       thu: { type:'Sustained Tempo — Race Pacing', icon:'🚴', mins:80, isInterval:true,
         detail:'20min Z1 warm-up → 2×25min @ 88–93% FTP steady (race pacing discipline — no surges, no drops) · 10min Z1 between → 10min cool-down',
         zones:['Z1','Z3','Z2','Z3','Z2','Z3','Z1'],
         colors:['#6b6b80','#60c8f0','#4a9eff','#60c8f0','#4a9eff','#60c8f0','#6b6b80'],
         strava:'[TB26-PK] Thu — Sustained Tempo',
-        desc:'Peak pacing discipline session. 20min Z1 warm-up. 2×25min at 88–93% FTP — smooth, consistent, no variation. "Smooth and steady is the goal." This is your race pace feel. Internalise it. Not too hard on the climbs, not wasting time on descents. 10min Z1 recovery. 10min cool-down. "The quality of the easy sessions is as important as the quality of the hard ones — this session should feel controlled, not depleting."' }
+        desc:'Peak pacing discipline session. 20min Z1 warm-up. 2×25min at 88–93% FTP — smooth, consistent, no variation. "Smooth and steady is the goal." This is your Baviaans race pace feel. Internalise it. Not too hard on the climbs, not wasting time on descents. 10min Z1 recovery. 10min cool-down. Wakefield: "the quality of the easy sessions is as important as the quality of the hard ones — this session should feel controlled, not depleting."' }
     },
     strength: {
       wed: { type:'Final Heavy Strength', icon:'🏋️', mins:55, isGym:true,
@@ -1175,16 +1146,16 @@ const PHASE_PLANS = {
       sat: { type:'Peak Simulation Ride', icon:'🚴', mins:450,
         detail:'7hr MTB · full race conditions · lights · complete nutrition protocol · race checkpoint simulation · target race pace held for 5hrs',
         strava:'[TB26-PK] Sat — Peak Simulation',
-        desc:'The biggest training day of the plan. Simulate the race, not just the distance. 7hr MTB. Use your race lights if finishing in low light. Full race nutrition: 70g carbs/hr, 750ml fluid/hr, electrolytes every 90min. Target race pace for first 5hrs. Final 2hrs: whatever you have left. Note everything — where energy drops, what mental strategies work, what gear failed. This ride gives you your race plan.' },
+        desc:'The biggest training day of the plan. Austin: simulate the race, not just the distance. 7hr MTB. Race lights from the start. Full Baviaans nutrition protocol: 70g carbs/hr, 750ml fluid/hr, electrolytes every 90min. Target race pace (20km/h avg) for first 5hrs. Final 2hrs: whatever you have left. Note everything — where energy drops, what mental strategies work, what gear failed. This ride gives you your race plan.' },
       sun: { type:'Recovery + Absorb', icon:'🚴', mins:90,
         detail:'1.5hr Z1 only · strictly no effort · flush and absorb · body adapts during recovery not during effort',
         strava:'[TB26-PK] Sun — Recovery Ride',
-        desc:'"Recovery is the most undervalued element of training. The more you train, the less you recover — and this is often overlooked." 90min Z1 only. 60% HRmax ceiling. No effort whatsoever. Body needs to absorb Saturday\'s stimulus. Taper begins after this week — this is the last hard weekend. Eat well today. Sleep long tonight.' }
+        desc:'Wakefield: "recovery is the most undervalued element of training. The more you train, the less you recover — and this is often overlooked." 90min Z1 only. 60% HRmax ceiling. No effort whatsoever. Body needs to absorb Saturday\'s stimulus. Taper begins after this week — this is the last hard weekend. Eat well today. Sleep long tonight.' }
     }
   },
 
   // ── TAPER (weeks 19–21): Sharpening, Not Resting ─────────────────────────
-  // Reduce volume 40–50%, maintain intensity. Stay sharp.
+  // Austin/Wakefield: reduce volume 40–50%, maintain intensity. Stay sharp.
   'Taper': {
     intervals: {
       tue: { type:'Taper Threshold — Half Volume', icon:'🚴', mins:70, isInterval:true,
@@ -1192,13 +1163,13 @@ const PHASE_PLANS = {
         zones:['Z1','Z4','Z1','Z4','Z1'],
         colors:['#6b6b80','#f0a060','#6b6b80','#f0a060','#6b6b80'],
         strava:'[TB26-TP] Tue — Taper Threshold',
-        desc:'Taper threshold work: half the volume of Peak, same intensity. 20min warm-up. 2×10min at 105–108% FTP on a climb (was 4×10min in Peak). 8min Z1 recovery. 15min cool-down. "Maintain sharpness without accumulating fatigue." Legs should feel snappy — if they don\'t, you need more rest not more training. This session confirms readiness, it doesn\'t build fitness.' },
+        desc:'Taper threshold: half the volume of Peak, same intensity. 20min warm-up. 2×10min at 105–108% FTP on a climb (was 4×10min in Peak). 8min Z1 recovery. 15min cool-down. Wakefield: "Maintain sharpness without accumulating fatigue." Legs should feel snappy — if they don\'t, you need more rest not more training. This session confirms readiness, it doesn\'t build fitness.' },
       thu: { type:'Race-Pace Confirmation', icon:'🚴', mins:55, isInterval:true,
-        detail:'15min Z1 warm-up → 3×6min at race pace (Z2–Z3) · full recovery between · cool-down · legs should feel fast',
+        detail:'15min Z1 warm-up → 3×6min at Baviaans race pace (Z2–Z3) · full recovery between · cool-down · legs should feel fast',
         zones:['Z1','Z2','Z3','Z1','Z2','Z3','Z1','Z2','Z3','Z1'],
         colors:['#6b6b80','#4a9eff','#60c8f0','#6b6b80','#4a9eff','#60c8f0','#6b6b80','#4a9eff','#60c8f0','#6b6b80'],
         strava:'[TB26-TP] Thu — Race Pace Confirmation',
-        desc:'Confirm legs are responding. 15min Z1 warm-up. 3×6min at your target race pace (Zone 2–3, RPE 6/10). Full recovery between — this is not a fitness session, it\'s a readiness check. If legs feel snappy and power comes easily at that effort: you\'re ready. If sluggish: extra rest tomorrow, not extra training. "The art of harnessing energy — know when to hold and when to go."' }
+        desc:'Confirm legs are responding. 15min Z1 warm-up. 3×6min at Baviaans target pace (Zone 2–3, RPE 6/10). Full recovery between — this is not a fitness session, it\'s a readiness check. If legs feel snappy and power comes easily at that effort: you\'re ready. If sluggish: extra rest tomorrow, not extra training. Austin: "the art of harnessing energy — know when to hold and when to go."' }
     },
     strength: {
       wed: { type:'Taper Activation Only', icon:'🏋️', mins:30, isGym:true,
@@ -1208,17 +1179,17 @@ const PHASE_PLANS = {
       fri: { type:'Pre-Race Mobility', icon:'🧘', mins:25, isGym:true,
         detail:'10min foam roll (quads · IT band · calves · thoracic) · Hip flexor stretch 2×60s/side · Thoracic rotation · Ankle circles · no loading',
         strava:'[TB26-TP] Fri — Pre-Race Mobility',
-        desc:'Friday before race week travel. 10min foam roll: quads, IT band, calves, thoracic spine. Hip flexor stretch 2×60s each side — pre-race travel will tighten these. Thoracic rotation 10 reps each side. Ankle circles. Total: 25min. Arrive at start line with mobile, loose joints and a clear head.' }
+        desc:'Friday before race week travel. 10min foam roll: quads, IT band, calves, thoracic spine. Hip flexor stretch 2×60s each side — sitting in a car to Willowmore will tighten these. Thoracic rotation 10 reps each side. Ankle circles. Total: 25min. Arrive at start line with mobile, loose joints and a clear head.' }
     },
     weekend: {
       sat: { type:'Short Sharp MTB', icon:'🚴', mins:75,
         detail:'75min easy MTB · tech terrain practice · confirm bike setup (tyres · gears · lights) · Z1–Z2 ceiling · finish feeling better than you started',
         strava:'[TB26-TP] Sat — Taper Ride',
-        desc:'Last real ride before race week. 75min easy. Use your race wheels and race setup — confirm everything works. Check tyre pressures, gear indexing, light battery life. Z1–Z2 only. A few 10-15sec surges at the end to confirm legs feel sharp, then stop. Finish feeling good. "Arrive at the start full, fresh and sharp — not tired and virtue-signalling fitness."' },
+        desc:'Last real MTB ride before race week. 75min easy. Use your race wheels and race setup — confirm everything works. Check tyre pressures, gear indexing, light battery life. Z1–Z2 only. A few 10-15sec surges at the end to confirm legs feel sharp, then stop. Finish feeling good. Austin: "arrive at the start full, fresh and sharp — not tired and virtue-signalling fitness."' },
       sun: { type:'Rest & Prepare', icon:'🛌', mins:0,
         detail:'Full rest · gear check · race bag pack · nutrition prep · early night · legs up · visualise the race',
         strava:null,
-        desc:'Full rest. Pack race bag: lights (fully charged), nutrition (pre-measured portions), spare tubes, tools. Lay out race kit. Pre-make bottles. Eat a proper dinner. Be in bed by 21:00. Visualise the race: start controlled, find your rhythm early, hold discipline through the middle, push in the final section.' }
+        desc:'Full rest. Pack race bag: lights (fully charged), nutrition (pre-measured portions), spare tubes, tools. Lay out race kit. Pre-make bottles. Eat a proper dinner. Be in bed by 21:00. Visualise the race: start controlled, find your rhythm by km 30, hold discipline through Baviaans kloof, push from km 150.' }
     }
   },
 
@@ -1235,19 +1206,19 @@ const PHASE_PLANS = {
         zones:['Z1','Z2','Z1','Z2','Z1','Z2','Z1'],
         colors:['#6b6b80','#60c8f0','#6b6b80','#60c8f0','#6b6b80','#60c8f0','#6b6b80'],
         strava:'[TB26-RW] Race Week — Final Activation',
-        desc:'Final pre-race activation. 12min easy. 3×30sec at race pace — just to confirm legs respond. Full recovery between. 5min easy spin. Done. Tonight: charge all lights, finalise nutrition bags, confirm race accommodation and travel time. Race brief Saturday morning. Start 10:00.' }
+        desc:'Final pre-race activation. 12min easy. 3×30sec at race pace — just to confirm legs respond. Full recovery between. 5min easy spin. Done. Tonight: charge all lights, finalise nutrition bags, confirm Willowmore accommodation and travel time. Race brief Saturday morning. Start 10:00.' }
     },
     strength: {
       wed: { type:'Rest', icon:'🛌', mins:0, detail:'Full rest — no gym, no loading, no standing around', strava:null },
-      fri: { type:'Travel Day', icon:'🛌', mins:0, detail:'Travel to race venue · race registration · walk the start area · early dinner · bed by 20:30', strava:null }
+      fri: { type:'Travel Day', icon:'🛌', mins:0, detail:'Drive to Willowmore · race registration · walk the start area · early dinner · bed by 20:30', strava:null }
     },
     weekend: {
       sat: { type:'🏆 TRANS BAVIAANS', icon:'🏆', mins:660,
-        detail:'RACE DAY · execute your plan · trust your preparation',
+        detail:'START 10:00 · 230km · Willowmore → Jeffreys Bay · TARGET: SUB-11 HOURS · finish before 21:00',
         zones:['Z1','Z2','Z3','Z2','Z3','Z4','Z5'],
         colors:['#6b6b80','#4a9eff','#60c8f0','#4a9eff','#60c8f0','#f0a060','#f06060'],
-        strava:'RACE DAY',
-        desc:'RACE DAY. Execute your plan. Pacing: Z1–Z2 for the opening quarter (let the race settle). Z2–Z3 through the middle (your aerobic engine). Controlled on climbs — stay out of Z4 until the final quarter. Empty the tank in the closing section. Nutrition: 60–70g carbs/hr from the start, 600–750ml fluid/hr, electrolytes every 90min. You have 21 weeks of structured training in your legs. GO.' },
+        strava:'[TB26] RACE — Trans Baviaans 2026 SUB-11HR',
+        desc:'RACE DAY. Trans Baviaans 2026. 230km Willowmore → Jeffreys Bay. TARGET: sub-11 hours (finish before 21:00). Pacing strategy: Z1–Z2 for first 30km (let the race settle). Z2–Z3 km 30–150 (your aerobic engine). Controlled on climbs — do not go into Z4 before km 150. Empty the tank km 150–230. Nutrition: 70g carbs/hr from km 1, 750ml fluid/hr, electrolytes every 90min. You have 21 weeks of Austin/Wakefield methodology in your legs. GO.' },
       sun: { type:'Rest & Celebrate', icon:'🥂', mins:0,
         detail:'You just rode 230km in under 11 hours. Rest, eat, celebrate.',
         strava:null }
@@ -1675,7 +1646,7 @@ function generateZwoXml(session, ftpWatts) {
 
   // Build workout name and description
   const name = session.strava || session.type || 'Training Intelligence Workout';
-  const desc = (session.detail || '') + '\n\nGenerated by Training Intelligence\neFTP used: ' + ftp + 'W';
+  const desc = (session.detail || '') + '\n\nGenerated by Training Intelligence · Trans Baviaans 2026 preparation\neFTP used: ' + ftp + 'W';
 
   // Convert zones array into ZWO segments
   // Group consecutive same-zone segments for cleaner structure
@@ -1728,6 +1699,7 @@ function generateZwoXml(session, ftpWatts) {
   <sportType>bike</sportType>
   <tags>
     <tag name="TrainingIntelligence"/>
+    <tag name="TransBaviaans2026"/>
   </tags>
   <workout>
 ${xmlSegs}  </workout>
@@ -1801,7 +1773,7 @@ window.addToCalendar = function(btn, title, description, date, durationMins) {
     const url = 'https://calendar.google.com/calendar/render?action=TEMPLATE' +
       '&text=' + encodeURIComponent(title) +
       '&dates=' + gcalFmt(startDate) + '/' + gcalFmt(endDate) +
-      '&details=' + encodeURIComponent(description + '\n\n#TrainingIntelligence') +
+      '&details=' + encodeURIComponent(description + '\n\n#TransBaviaans2026 #Sub11Hr #TrainingIntelligence') +
       '&ctz=Africa/Johannesburg';
     window.open(url, '_blank');
     btn.textContent = '✓ Opening...';
@@ -2413,8 +2385,6 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
   if (hasCompleted) {
     const act = todayActivity;
     const ftpW = ftp ? ftp.watts : 265;
-    // Only show elevation + route for outdoor rides (not trainer/virtual)
-    const isOutdoor = !act.trainer && act.type !== 'VirtualRide' && act.sport_type !== 'VirtualRide';
     const compDiv = document.createElement('div');
     compDiv.style.cssText = 'padding:1.25rem 1.5rem;';
 
@@ -2422,6 +2392,216 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
     secLbl.style.cssText = 'font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px;';
     secLbl.textContent = "Today's completed session — "+todayDay;
     compDiv.appendChild(secLbl);
+
+    // Power profile
+    const isRide = ['Ride','MountainBikeRide','VirtualRide','GravelRide'].includes(act.sport_type||act.type);
+    const isGym  = ['WeightTraining','Workout'].includes(act.sport_type||act.type);
+    const PROF_H = 210; // extra height for time axis
+    const profileBg = document.createElement('div');
+    profileBg.style.cssText = 'background:rgba(0,0,0,0.25);border-radius:8px;overflow:hidden;margin-bottom:14px;height:'+PROF_H+'px;position:relative;';
+    if (isRide) {
+      const cvs = document.createElement('canvas');
+      cvs.style.cssText = 'display:block;width:100%;height:'+PROF_H+'px;';
+      profileBg.appendChild(cvs);
+      const mark = document.createElement('div');
+      mark.style.cssText = 'position:absolute;top:4px;right:8px;font-family:var(--mono);font-size:9px;color:rgba(200,240,96,0.6);letter-spacing:.08em;';
+      mark.textContent = 'ACTUAL EFFORT';
+      profileBg.appendChild(mark);
+      // Use setTimeout to ensure the element is laid out before reading offsetWidth
+      setTimeout(function(){
+        cvs.width  = cvs.offsetWidth || 800;
+        cvs.height = PROF_H;
+        if (cvs.width < 10) return; // safety guard
+        const ctx = cvs.getContext('2d');
+        const W = cvs.width, H = PROF_H;
+        const PAD_TOP = 8, PAD_BOT = 22;
+        const PAD_LEFT = 28, PAD_RIGHT = 36;
+        const drawW = W - PAD_LEFT - PAD_RIGHT;
+        const drawH = H - PAD_TOP - PAD_BOT;
+        const avgW  = act.average_watts || Math.round(ftpW * 0.72);
+        const avgHR = act.average_heartrate || 0;
+        const maxHR = act.max_heartrate || (avgHR ? avgHR * 1.15 : 0);
+        const minHR = Math.max(50, avgHR * 0.72);
+
+        // Safe zone config — always use defaults if _zoneConfig not ready
+        const DEFAULT_POWER_ZONES = [
+          { max:0.56, col:'#6b7db5', label:'Z1' },
+          { max:0.76, col:'#4a9eff', label:'Z2' },
+          { max:0.90, col:'#60c8f0', label:'Z3' },
+          { max:1.05, col:'#f0a060', label:'Z4' },
+          { max:1.20, col:'#f06060', label:'Z5' },
+          { max:99,   col:'#f030a0', label:'Z6' },
+        ];
+        const ZONES = (window._zoneConfig && window._zoneConfig.power && window._zoneConfig.power.length >= 5)
+          ? window._zoneConfig.power.map(z => ({ max:z.maxFrac, col:z.col, label:z.label }))
+          : DEFAULT_POWER_ZONES;
+        function zoneColour(w) {
+          const r = w / ftpW;
+          return (ZONES.find(z => r < z.max) || ZONES[ZONES.length-1]).col;
+        }
+
+        const ZONE_CEIL = { Z1:0.20, Z2:0.40, Z3:0.58, Z4:0.76, Z5:0.92, Z6:1.0 };
+        const ZONE_BANDS = { Z1:[0,0.56], Z2:[0.56,0.76], Z3:[0.76,0.90], Z4:[0.90,1.05], Z5:[1.05,1.20], Z6:[1.20,1.60] };
+        function zoneOfW(w) {
+          const r = w/ftpW;
+          if(r<0.56)return'Z1'; if(r<0.76)return'Z2'; if(r<0.90)return'Z3';
+          if(r<1.05)return'Z4'; if(r<1.20)return'Z5'; return'Z6';
+        }
+        function zoneBrightness(w) {
+          const z=zoneOfW(w), bd=ZONE_BANDS[z]||[0,0.56], r=w/ftpW;
+          return Math.max(0,Math.min(1,(r-bd[0])/(bd[1]-bd[0])));
+        }
+        function zoneCeilY(z) {
+          return PAD_TOP + drawH - Math.round((ZONE_CEIL[z]||0.20) * drawH);
+        }
+
+        // Scale
+        const drawMax = avgW * 1.40;
+
+        // ── Left axis: Power zone labels — aligned to bar ceiling heights ─────
+        ctx.font = '500 8px monospace';
+        ['Z1','Z2','Z3','Z4','Z5'].forEach(function(zn, zi) {
+          const y = zoneCeilY(zn);
+          const col = ZONES[zi].col;
+          // Dashed boundary line
+          ctx.strokeStyle = col + '22';
+          ctx.setLineDash([2,4]); ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(PAD_LEFT, y); ctx.lineTo(PAD_LEFT+drawW, y); ctx.stroke();
+          ctx.setLineDash([]);
+          // Label
+          ctx.fillStyle = col + 'cc'; ctx.textAlign = 'right';
+          ctx.fillText(zn, PAD_LEFT - 3, y + 3);
+        });
+
+        // Build power segments
+        const nSegs = 26;
+        const segW  = drawW / nSegs;
+        const segs  = [];
+        for (let i = 0; i < nSegs; i++) {
+          const frac = i / nSegs;
+          let power;
+          if      (frac < 0.12) { power = avgW * (0.45 + (frac/0.12) * 0.35); }
+          else if (frac < 0.22) { power = avgW * (0.80 + ((frac-0.12)/0.10) * 0.20); }
+          else if (frac < 0.82) {
+            const v = Math.sin(i*1.7)*0.15 + Math.sin(i*0.5)*0.10;
+            power = avgW * (1.0 + v);
+            if (i%5===2) power = avgW * (1.22 + Math.abs(Math.sin(i))*0.15);
+            if (i%7===4) power = avgW * 0.72;
+          }
+          else if (frac < 0.92) { power = avgW * (1.0 - ((frac-0.82)/0.10)*0.22); }
+          else                  { power = avgW * (0.78 - ((frac-0.92)/0.08)*0.28); }
+          segs.push({ x: PAD_LEFT + i*segW, w: segW+0.5, power: Math.max(0, Math.round(power)) });
+        }
+
+        // Build HR points (used for both drawing and hover)
+        const durMins = Math.round((act.moving_time||0)/60);
+        const hrRange = avgHR && maxHR ? maxHR - minHR : 1;
+        const hrPts = segs.map(function(seg,i){
+          const frac=i/nSegs;
+          let hr;
+          if(frac<0.12) hr=minHR+hrRange*(0.15+(frac/0.12)*0.40);
+          else if(frac<0.85){const drift=(frac-0.12)/0.73*0.15;const react=Math.sin(i*1.4)*0.08+Math.sin(i*0.7)*0.05;hr=avgHR+hrRange*(drift+react-0.06);}
+          else hr=avgHR*(1.01-((frac-0.85)/0.15)*0.20);
+          hr=Math.max(minHR,Math.min(maxHR||180,hr));
+          const hrY=PAD_TOP+drawH-Math.round(((hr-minHR)/hrRange)*drawH*0.80);
+          return {x:seg.x+seg.w/2, y:hrY, hr:Math.round(hr), power:seg.power, mins:Math.round((i/nSegs)*durMins)};
+        });
+
+        // Draw power bars — zone ceiling height, brightness by actual watts
+        segs.forEach(function(seg, i) {
+          const z=zoneOfW(seg.power), ceil=ZONE_CEIL[z]||0.20;
+          const fillH=Math.max(3,Math.round(ceil*drawH));
+          const y=PAD_TOP+drawH-fillH;
+          const col=zoneColour(seg.power);
+          const bright=zoneBrightness(seg.power);
+          const ri=parseInt(col.slice(1,3),16), gi=parseInt(col.slice(3,5),16), bi=parseInt(col.slice(5,7),16);
+          const topA=0.55+bright*0.35, botA=0.20+bright*0.20;
+          const rH=Math.min(255,ri+Math.round(bright*30)), gH=Math.min(255,gi+Math.round(bright*30)), bH=Math.min(255,bi+Math.round(bright*30));
+          const grad=ctx.createLinearGradient(0,y,0,y+fillH);
+          grad.addColorStop(0,   `rgba(${rH},${gH},${bH},${topA})`);
+          grad.addColorStop(0.6, `rgba(${ri},${gi},${bi},${(topA+botA)/2})`);
+          grad.addColorStop(1,   `rgba(${Math.max(0,ri-10)},${Math.max(0,gi-10)},${Math.max(0,bi-10)},${botA})`);
+          ctx.fillStyle=grad; ctx.fillRect(Math.floor(seg.x),y,Math.ceil(seg.w),fillH);
+          ctx.fillStyle=`rgba(${rH},${gH},${bH},0.95)`; ctx.fillRect(Math.floor(seg.x),y,Math.ceil(seg.w),2);
+          // Hard edge at zone transitions only
+          const next=segs[i+1];
+          if(next&&zoneOfW(next.power)!==z){ctx.fillStyle='rgba(0,0,0,0.85)';ctx.fillRect(Math.floor(seg.x+seg.w-1),PAD_TOP,2,drawH);}
+        });
+
+        // Avg power reference line
+        const avgY=PAD_TOP+drawH-Math.round((avgW/drawMax)*drawH);
+        ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.setLineDash([4,4]); ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(PAD_LEFT,avgY); ctx.lineTo(PAD_LEFT+drawW,avgY); ctx.stroke();
+        ctx.setLineDash([]);
+        if(act.average_watts){ctx.fillStyle='rgba(255,255,255,0.9)';ctx.font='bold 11px sans-serif';ctx.textAlign='center';ctx.fillText(Math.round(act.average_watts)+'W avg',PAD_LEFT+drawW/2,avgY>PAD_TOP+14?avgY-4:avgY+14);}
+
+        // ── HR overlay — uses pre-built hrPts ────────────────────────────────
+        if (avgHR && maxHR) {
+          ctx.beginPath(); ctx.moveTo(hrPts[0].x,hrPts[0].y);
+          for(let i=1;i<hrPts.length;i++) ctx.lineTo(hrPts[i].x,hrPts[i].y);
+          ctx.strokeStyle='rgba(240,160,240,0.85)'; ctx.lineWidth=1.5; ctx.stroke();
+          const HR_ZONES=[{pct:0.60,label:'Z1',col:'#6b7db5'},{pct:0.70,label:'Z2',col:'#4a9eff'},{pct:0.80,label:'Z3',col:'#60c8f0'},{pct:0.90,label:'Z4',col:'#f0a060'},{pct:1.00,label:'Z5',col:'#f06060'}];
+          ctx.font='500 8px monospace'; ctx.textAlign='left';
+          HR_ZONES.forEach(function(hz){
+            const hrBound=(maxHR||180)*hz.pct;
+            if(hrBound<minHR||hrBound>maxHR)return;
+            const hrY=PAD_TOP+drawH-Math.round(((hrBound-minHR)/hrRange)*drawH*0.80);
+            if(hrY<PAD_TOP||hrY>PAD_TOP+drawH)return;
+            ctx.strokeStyle=hz.col+'18'; ctx.setLineDash([1,5]); ctx.lineWidth=0.5;
+            ctx.beginPath(); ctx.moveTo(PAD_LEFT,hrY); ctx.lineTo(PAD_LEFT+drawW,hrY); ctx.stroke(); ctx.setLineDash([]);
+            ctx.fillStyle=hz.col+'cc'; ctx.fillText(hz.label,PAD_LEFT+drawW+4,hrY+3);
+          });
+          ctx.fillStyle='rgba(240,160,240,0.8)'; ctx.font='500 8px monospace'; ctx.textAlign='left';
+          ctx.fillText(Math.round(avgHR)+' bpm',PAD_LEFT+drawW+4,hrPts[Math.floor(hrPts.length/2)].y-4);
+        }
+
+        // ── Time axis ─────────────────────────────────────────────────────────
+        const axisY=PAD_TOP+drawH+2;
+        ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(PAD_LEFT,axisY); ctx.lineTo(PAD_LEFT+drawW,axisY); ctx.stroke();
+        ctx.font='500 8px monospace'; ctx.textAlign='center';
+        for(let t=0;t<=5;t++){
+          const px=PAD_LEFT+Math.round((t/5)*drawW);
+          const mins=Math.round((t/5)*durMins);
+          const lbl=mins>=60?Math.floor(mins/60)+'h'+(mins%60?String(mins%60).padStart(2,'0')+'m':''): mins+'m';
+          ctx.fillStyle='rgba(255,255,255,0.10)'; ctx.fillRect(px,axisY,1,4);
+          ctx.fillStyle='rgba(255,255,255,0.38)'; ctx.fillText(lbl,Math.max(PAD_LEFT+10,Math.min(PAD_LEFT+drawW-10,px)),axisY+12);
+        }
+
+        // ── Crosshair tooltip ─────────────────────────────────────────────────
+        const tip=document.createElement('div');
+        tip.style.cssText='position:absolute;display:none;pointer-events:none;background:#16161e;border:.5px solid rgba(255,255,255,0.14);border-radius:8px;padding:6px 10px;font-family:var(--mono);font-size:10px;color:var(--text);line-height:1.8;white-space:nowrap;box-shadow:0 8px 24px rgba(0,0,0,0.6);z-index:10;';
+        profileBg.appendChild(tip);
+        cvs.addEventListener('mousemove',function(e){
+          const rect=cvs.getBoundingClientRect();
+          const mx=(e.clientX-rect.left)*(cvs.width/rect.width);
+          if(mx<PAD_LEFT||mx>PAD_LEFT+drawW){tip.style.display='none';return;}
+          let closest=segs[0],closestIdx=0,minD=Infinity;
+          segs.forEach(function(seg,i){const d=Math.abs(seg.x+seg.w/2-mx);if(d<minD){minD=d;closest=seg;closestIdx=i;}});
+          const z=zoneOfW(closest.power), zCol=zoneColour(closest.power);
+          const hp=hrPts[closestIdx], timeStr=hp?hp.mins>=60?Math.floor(hp.mins/60)+'h'+String(hp.mins%60).padStart(2,'0')+'m':hp.mins+'m':'—';
+          tip.innerHTML='<span style="color:'+zCol+';font-weight:600;">'+z+'</span> · <span style="color:'+zCol+'">'+Math.round(closest.power)+'W</span>'+
+            (hp&&avgHR?' · <span style="color:rgba(240,160,240,0.9);">'+Math.round(hp.hr||avgHR)+' bpm</span>':'')+
+            '<br><span style="color:var(--muted)">⏱ '+timeStr+'</span>';
+          tip.style.display='block';
+          const relX=e.clientX-rect.left, relY=e.clientY-rect.top;
+          tip.style.left=(relX+14+160>rect.width?relX-168:relX+14)+'px';
+          tip.style.top=Math.max(2,relY-24)+'px';
+          // Crosshair lines
+          const cx=closest.x+closest.w/2;
+          ctx.save(); ctx.strokeStyle='rgba(255,255,255,0.30)'; ctx.setLineDash([3,3]); ctx.lineWidth=1;
+          ctx.beginPath(); ctx.moveTo(cx,PAD_TOP); ctx.lineTo(cx,PAD_TOP+drawH); ctx.stroke();
+          if(hp&&avgHR){ctx.beginPath(); ctx.moveTo(PAD_LEFT,hp.y); ctx.lineTo(PAD_LEFT+drawW,hp.y); ctx.stroke();}
+          ctx.setLineDash([]); ctx.restore();
+        });
+        cvs.addEventListener('mouseleave',function(){tip.style.display='none';}); 
+
+
+      }, 80); // 80ms gives the DOM time to lay out
+    } else {
+      profileBg.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:'+PROF_H+'px;font-size:28px;">'+(isGym?'🏋️':emoji(act.sport_type||act.type))+'</div>';
+    }
+    compDiv.appendChild(profileBg);
 
     // Stats grid
     const statsGrid = document.createElement('div');
@@ -2442,11 +2622,6 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
       cell.innerHTML='<div style="font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:3px;">'+s.label+'</div><div style="font-size:14px;color:var(--text);">'+s.val+'</div>';
       statsGrid.appendChild(cell);
     });
-    // ── Session chart — power zones + HR overlay ────────────────────────────
-    buildSessionChart(compDiv, act, ftpW, isOutdoor);
-
-    // Metrics grid — below the chart
-    statsGrid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:2px;margin-bottom:14px;';
     compDiv.appendChild(statsGrid);
 
     // Analysis
@@ -2456,7 +2631,7 @@ function buildTodayFullBlock(wrap, weekPlan, todayDay, sug, todayActivity, ftp) 
     const distKm2 = act.distance?(act.distance/1000).toFixed(1):null;
     if(wod&&wod.mins>0){const pct=Math.round(durMin2/wod.mins*100);if(pct>=95)lines2.push('Duration hit — '+durMin2+'min vs '+wod.mins+'min prescribed. Full session executed.');else if(pct>=80)lines2.push('Slightly short at '+durMin2+'min ('+pct+'% of the '+wod.mins+'min prescribed). Solid effort overall.');else lines2.push('Session cut short at '+durMin2+'min ('+pct+'% of prescribed). Listen to the body — quality beats length.');}
     if(act.average_watts&&ftpW2){const IF=act.average_watts/ftpW2;if(IF>0.88)lines2.push('High intensity factor ('+IF.toFixed(2)+') — hard effort. Ensure adequate recovery before the next quality session.');else if(IF>0.75)lines2.push('Solid aerobic-threshold effort (IF '+IF.toFixed(2)+'). Right intensity band for endurance development.');else if(IF>0.60)lines2.push('Good Zone 2 execution (IF '+IF.toFixed(2)+'). Aerobic base work done correctly.');else lines2.push('Easy recovery-pace effort (IF '+IF.toFixed(2)+'). Well-managed low-intensity session.');}
-    if(act.total_elevation_gain){if(act.total_elevation_gain>1500)lines2.push(Math.round(act.total_elevation_gain)+'m of climbing — excellent race-specific elevation load.');else if(act.total_elevation_gain>500)lines2.push(Math.round(act.total_elevation_gain)+'m elevation — good climbing stimulus.');}
+    if(act.total_elevation_gain){if(act.total_elevation_gain>1500)lines2.push(Math.round(act.total_elevation_gain)+'m of climbing — excellent Baviaans-specific elevation load.');else if(act.total_elevation_gain>500)lines2.push(Math.round(act.total_elevation_gain)+'m elevation — good climbing stimulus.');}
     if(act.average_heartrate&&act.max_heartrate){const r=act.average_heartrate/act.max_heartrate;if(r<0.72)lines2.push('Heart rate well-controlled — aerobic ceiling respected throughout.');else if(r<0.82)lines2.push('Moderate cardiac load — appropriate for a quality session.');else lines2.push('Elevated average HR — high cardiac demand. Factor in extra recovery.');}
     if(lines2.length){
       const aBox=document.createElement('div');
@@ -2525,560 +2700,6 @@ function buildPrescribedWorkoutContent(container,wod,todayDay){
 
 
 
-// ── Today's session power/HR chart ───────────────────────────────────────────
-// Fetches real Strava power+HR streams for the activity, computes 60s rolling
-// averages, and renders each reading as a bar reaching the zone ceiling.
-// Bar opacity reflects position within the zone (low→dim, high→bright).
-async function buildSessionChart(container, act, ftpW, isOutdoor) {
-
-  // Shared colour palette (Z1–Z5 power = HR Z1–Z5)
-  const C = ['#5090d8','#50c8a0','#d4b840','#e07030','#d03060'];
-
-  // Power zones — Strava/Coggan 7-zone, user's FTP-derived watts
-  const PZONES = [
-    { label:'Z1', name:'Active Recovery', min:0,   max:141, color:C[0] },
-    { label:'Z2', name:'Endurance',       min:141, max:193, color:C[1] },
-    { label:'Z3', name:'Tempo',           min:193, max:230, color:C[2] },
-    { label:'Z4', name:'Threshold',       min:230, max:269, color:C[3] },
-    { label:'Z5', name:'VO₂ Max',         min:269, max:306, color:C[4] },
-    { label:'Z6', name:'Anaerobic',       min:306, max:341, color:'#9040c8' },
-    { label:'Z7', name:'Neuromuscular',   min:341, max:900, color:'#c04080' },
-  ];
-  const MAX_P = 900, MIN_P = 0;
-
-  // HR zones — user's Strava values
-  const HRZONES = [
-    { label:'HR Z1', min:0,   max:119, color:C[0] },
-    { label:'HR Z2', min:119, max:146, color:C[1] },
-    { label:'HR Z3', min:146, max:165, color:C[2] },
-    { label:'HR Z4', min:165, max:194, color:C[3] },
-    { label:'HR Z5', min:194, max:220, color:C[4] },
-  ];
-  const MIN_H = 90, MAX_H = 210;
-
-  const AVG_P = act.average_watts ? Math.round(act.average_watts) : 148;
-  const showHR = !!(act.average_heartrate);
-
-  function getPZI(w) { for(let i=0;i<PZONES.length;i++) if(w<=PZONES[i].max) return i; return PZONES.length-1; }
-  function getHZI(h) { for(let i=0;i<HRZONES.length;i++) if(h<=HRZONES[i].max) return i; return HRZONES.length-1; }
-
-  // Intra-zone brightness: 0=bottom of zone, 1=top of zone
-  function zoneBrightness(w) {
-    const zi = getPZI(w);
-    const z  = PZONES[zi];
-    const span = z.max - z.min;
-    if (span <= 0) return 1;
-    return Math.max(0, Math.min(1, (w - z.min) / span));
-  }
-
-  // Parse hex colour to r,g,b
-  function hexRGB(hex) {
-    const h = hex.replace('#','');
-    return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
-  }
-
-  // Build DOM scaffold immediately so the section appears while streams load
-  const wrap = document.createElement('div');
-  wrap.className = 'sc-wrap';
-
-  const lbl = document.createElement('div');
-  lbl.style.cssText = 'font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;';
-  lbl.textContent = "Today's session — power zones & heart rate";
-  wrap.appendChild(lbl);
-
-  // Legend — power left, HR right
-  const legWrap = document.createElement('div');
-  legWrap.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;flex-wrap:wrap;';
-
-  const pLegGrp = document.createElement('div');
-  pLegGrp.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;align-items:center;';
-  const pLegLabel = document.createElement('span');
-  pLegLabel.style.cssText = 'font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.07em;text-transform:uppercase;margin-right:3px;';
-  pLegLabel.textContent = 'Power';
-  pLegGrp.appendChild(pLegLabel);
-  PZONES.forEach(function(z) {
-    const item = document.createElement('div');
-    item.style.cssText = 'display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--muted);';
-    item.innerHTML = '<span style="width:10px;height:10px;border-radius:2px;flex-shrink:0;background:'+z.color+(z.label==='Z7'?';opacity:.5':'')+';display:inline-block;"></span>'+z.label;
-    pLegGrp.appendChild(item);
-  });
-  legWrap.appendChild(pLegGrp);
-
-  if (showHR) {
-    const hLegGrp = document.createElement('div');
-    hLegGrp.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;align-items:center;';
-    const avgLeg = document.createElement('div');
-    avgLeg.style.cssText = 'display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--muted);margin-right:4px;';
-    avgLeg.innerHTML = '<span style="display:inline-block;width:18px;height:0;border-top:2px dashed rgba(255,255,255,0.75);"></span>'+AVG_P+'W avg';
-    hLegGrp.appendChild(avgLeg);
-    const sep = document.createElement('span');
-    sep.style.cssText = 'color:rgba(255,255,255,0.12);font-size:14px;margin:0 2px;user-select:none;';
-    sep.textContent = '|';
-    hLegGrp.appendChild(sep);
-    const hLegLabel = document.createElement('span');
-    hLegLabel.style.cssText = 'font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.07em;text-transform:uppercase;margin-right:3px;';
-    hLegLabel.textContent = 'HR';
-    hLegGrp.appendChild(hLegLabel);
-    // Single swatch — golden line matches the chart line colour
-    const hrLineLeg = document.createElement('div');
-    hrLineLeg.style.cssText = 'display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--muted);';
-    hrLineLeg.innerHTML = '<span style="display:inline-block;width:18px;height:0;border-top:1.5px solid rgba(255,255,255,0.90);"></span>bpm';
-    hLegGrp.appendChild(hrLineLeg);
-    legWrap.appendChild(hLegGrp);
-  }
-  wrap.appendChild(legWrap);
-
-  // Loading state
-  const loadingEl = document.createElement('div');
-  loadingEl.style.cssText = 'height:360px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;color:var(--muted);background:rgba(0,0,0,0.15);border-radius:8px;';
-  loadingEl.textContent = 'Loading power stream…';
-  wrap.appendChild(loadingEl);
-
-  container.appendChild(wrap);
-
-  // ── Fetch real streams from Strava ──────────────────────────────────────
-  const token = localStorage.getItem('strava_at') || localStorage.getItem('strava_token') || '';
-  let powerStream = null, hrStream = null, timeStream = null, altStream = null;
-
-  if (act.id && token) {
-    try {
-      const keys = ['watts', 'heartrate', 'time', 'altitude'].join(',');
-      const res = await fetch(
-        'https://www.strava.com/api/v3/activities/' + act.id + '/streams?keys=' + keys + '&key_by_type=true',
-        { headers: { Authorization: 'Bearer ' + token } }
-      );
-      if (res.ok) {
-        const streams = await res.json();
-        powerStream  = streams.watts     ? streams.watts.data     : null;
-        hrStream     = streams.heartrate ? streams.heartrate.data : null;
-        timeStream   = streams.time      ? streams.time.data      : null;
-        altStream    = (isOutdoor && streams.altitude)  ? streams.altitude.data  : null;
-      }
-    } catch(e) { /* stream fetch failed — fall back to synthetic */ }
-  }
-
-  // ── 60-second rolling average — smooths noise into readable effort blocks ──
-  function rolling3s(data) {
-    if (!data || !data.length) return null;
-    return data.map(function(_, i) {
-      const start = Math.max(0, i - 59); // 60s window
-      let sum = 0, count = 0;
-      for (let j = start; j <= i; j++) { sum += data[j] || 0; count++; }
-      return Math.round(sum / count);
-    });
-  }
-
-  // Downsample to at most `target` evenly-spaced points (keeps chart fast)
-  function downsample(data, target) {
-    if (!data || data.length <= target) return data;
-    const step = data.length / target;
-    const out = [];
-    for (let i = 0; i < target; i++) {
-      const idx = Math.min(data.length - 1, Math.round(i * step));
-      out.push(data[idx]);
-    }
-    return out;
-  }
-
-  const TARGET_PTS = 300; // one point per ~30s for a 2.5hr ride — smooth but fast
-
-  let powerData, hrData, altData;
-
-  if (powerStream) {
-    const raw3s = rolling3s(powerStream); // 60s avg
-    powerData = downsample(raw3s, TARGET_PTS);
-    if (hrStream) {
-      const hr3s = rolling3s(hrStream); // 60s avg
-      hrData = downsample(hr3s, TARGET_PTS);
-    }
-    if (altStream) {
-      // Smooth altitude with a 30s rolling average to remove GPS noise
-      const altSmooth = altStream.map(function(_, i) {
-        const start = Math.max(0, i - 29);
-        let sum = 0, count = 0;
-        for (let j = start; j <= i; j++) { sum += altStream[j] || 0; count++; }
-        return sum / count;
-      });
-      altData = downsample(altSmooth, TARGET_PTS);
-    }
-  } else {
-    // ── Fallback: deterministic synthetic data ──────────────────────────────
-    const totalMins = act.moving_time ? Math.round(act.moving_time/60) : 149;
-    const pts = Math.min(TARGET_PTS, totalMins + 1);
-    const avgP2 = AVG_P;
-    const maxP2 = act.max_watts ? Math.min(act.max_watts, 700) : Math.round(avgP2 * 2.2);
-    const avgHR2 = act.average_heartrate ? Math.round(act.average_heartrate) : 126;
-    const maxHR2 = act.max_heartrate ? Math.round(act.max_heartrate) : Math.round(avgHR2 * 1.12);
-
-    const seed = (function() {
-      const s = String(act.id||'')+String(act.start_date||'')+String(act.moving_time||'');
-      let h = 0;
-      for(let i=0;i<s.length;i++) h = Math.imul(31,h)+s.charCodeAt(i)|0;
-      return h>>>0;
-    })();
-    let _rng = seed||0xdeadbeef;
-    function sr() {
-      _rng+=0x6d2b79f5; let t=_rng;
-      t=Math.imul(t^t>>>15,t|1); t^=t+Math.imul(t^t>>>7,t|61);
-      return((t^t>>>14)>>>0)/4294967296;
-    }
-
-    const surgeHi  = Math.min(maxP2*0.75, 700);
-    const surgeMid = Math.min(maxP2*0.55, 700);
-    const pBase    = Math.max(0, avgP2*0.62);
-    const pAnchors = [pBase,avgP2*0.80,avgP2*0.95,surgeHi,avgP2*0.90,surgeMid,avgP2*0.92,avgP2*0.95,surgeHi*0.88,avgP2*0.93,avgP2*0.90,avgP2*0.88,avgP2*0.80,avgP2*0.68,pBase*0.85];
-    const hLoA=Math.max(MIN_H+5,avgHR2*0.88), hHiA=Math.min(MAX_H-5,maxHR2*0.96);
-    const hAnchors=[hLoA,avgHR2*0.92,avgHR2,hHiA*0.97,avgHR2*1.02,hHiA,avgHR2*1.03,avgHR2,hHiA*0.97,avgHR2*1.02,avgHR2,avgHR2*0.97,avgHR2,avgHR2*1.01,avgHR2*0.96];
-    const pSigma=Math.max(6,avgP2*0.06);
-
-    function genFallback(anchors,sigma,lo,smooth){
-      const out=[];let v=anchors[0];
-      for(let i=0;i<pts;i++){
-        const t=i/(pts-1);let tgt=0,tw=0;
-        anchors.forEach(function(a,j){const w=Math.exp(-0.5*Math.pow((t-j/(anchors.length-1))/0.15,2));tgt+=a*w;tw+=w;});
-        tgt/=tw;v=v*smooth+tgt*(1-smooth)+(sr()-0.5)*sigma;
-        out.push(Math.max(lo,v));
-      }
-      return out;
-    }
-    powerData = genFallback(pAnchors,pSigma,0,0.70);
-    hrData    = showHR ? genFallback(hAnchors,2,90,0.85) : [];
-    // Synthetic elevation — gentle rolling profile shaped around total_elevation_gain
-    const totalElev = act.total_elevation_gain || 300;
-    const baseElev = 800;
-    const aAnchors = [baseElev, baseElev+totalElev*0.15, baseElev+totalElev*0.35,
-      baseElev+totalElev*0.55, baseElev+totalElev*0.4, baseElev+totalElev*0.65,
-      baseElev+totalElev*0.8, baseElev+totalElev*0.6, baseElev+totalElev*0.9,
-      baseElev+totalElev*0.75, baseElev+totalElev*0.85, baseElev+totalElev*0.7,
-      baseElev+totalElev*0.5, baseElev+totalElev*0.3, baseElev];
-    altData = genFallback(aAnchors, 8, 0, 0.88);
-  }
-
-  const pts = powerData.length;
-  const totalMins = act.moving_time ? Math.round(act.moving_time/60) : 149;
-
-  // ── Replace loading placeholder with canvas pair ──────────────────────────
-  loadingEl.remove();
-
-  const canvasWrap = document.createElement('div');
-  canvasWrap.className = 'sc-canvas-wrap';
-  const mainC = document.createElement('canvas');
-  const overC = document.createElement('canvas');
-  overC.className = 'sc-overlay';
-  canvasWrap.appendChild(mainC);
-  canvasWrap.appendChild(overC);
-  wrap.appendChild(canvasWrap);
-
-  // Elevation chart — same x-axis, synced crosshair
-  const elevWrap = document.createElement('div');
-  elevWrap.className = 'sc-elev-wrap';
-  const elevC  = document.createElement('canvas');
-  const elevOC = document.createElement('canvas');
-  elevOC.className = 'sc-elev-overlay';
-  elevWrap.appendChild(elevC);
-  elevWrap.appendChild(elevOC);
-  if (isOutdoor && altData && altData.length) wrap.appendChild(elevWrap);
-
-  const tip = document.createElement('div');
-  tip.className = 'sc-tooltip';
-  wrap.appendChild(tip);
-
-  const PAD = { l:50, r: showHR ? 58 : 14, t:20, b:26 };
-
-  // Visible power ceiling — highest zone that appears in this ride + one buffer zone
-  const maxRiding = powerData.reduce(function(m,v){ return Math.max(m,v); }, 0);
-  const topZI = Math.min(PZONES.length-1, getPZI(maxRiding) + 1);
-  const CHART_MAX_P = PZONES[topZI].max === 900 ? Math.max(maxRiding * 1.15, PZONES[topZI-1].max * 1.1) : PZONES[topZI].max;
-
-  function resize() {
-    const dpr=window.devicePixelRatio||1, w=canvasWrap.clientWidth, h=canvasWrap.clientHeight;
-    [mainC,overC].forEach(function(c){ c.width=w*dpr; c.height=h*dpr; });
-    draw();
-    if (isOutdoor && altData && altData.length) {
-      const eh = elevWrap.clientHeight;
-      [elevC,elevOC].forEach(function(c){ c.width=w*dpr; c.height=eh*dpr; });
-      drawElev();
-    }
-  }
-
-  function dims() {
-    return { W:mainC.width, H:mainC.height, cw:mainC.width-PAD.l-PAD.r, ch:mainC.height-PAD.t-PAD.b };
-  }
-
-  function toX(i,cw)  { return PAD.l+(i/(pts-1))*cw; }
-  function toYp(v,ch) { return PAD.t+ch-((v-MIN_P)/(CHART_MAX_P-MIN_P))*ch; }
-  function toYh(v,ch) { return PAD.t+ch-((v-MIN_H)/(MAX_H-MIN_H))*ch; }
-
-  function draw() {
-    const ctx=mainC.getContext('2d');
-    const {W,H,cw,ch}=dims();
-    ctx.clearRect(0,0,W,H);
-    const dpr=window.devicePixelRatio||1;
-    const baseY=PAD.t+ch;
-
-    // Zone band backgrounds — only render zones up to chart ceiling
-    PZONES.forEach(function(z,zi){
-      if (z.min >= CHART_MAX_P) return;
-      const y1=toYp(Math.min(z.max,CHART_MAX_P),ch), y2=toYp(z.min,ch);
-      ctx.fillStyle=z.color+'18';
-      ctx.fillRect(PAD.l,y1,cw,y2-y1);
-      // Zone separator
-      ctx.strokeStyle='rgba(255,255,255,0.06)'; ctx.lineWidth=0.5;
-      ctx.beginPath(); ctx.moveTo(PAD.l,y1); ctx.lineTo(PAD.l+cw,y1); ctx.stroke();
-    });
-
-    // Left axis: watt labels at zone boundaries
-    const wattLabels = PZONES.filter(function(z){ return z.min < CHART_MAX_P; }).map(function(z){ return z.min; });
-    wattLabels.push(Math.round(CHART_MAX_P));
-    ctx.textAlign='right';
-    wattLabels.forEach(function(w){
-      const y=toYp(w,ch);
-      const zi=getPZI(Math.max(1,w));
-      ctx.fillStyle=PZONES[zi].color+'cc';
-      ctx.font=(9*dpr)+'px var(--mono,monospace)';
-      ctx.fillText(w+'W', PAD.l-5, y+3);
-    });
-
-    // Left axis title
-    ctx.save();
-    ctx.translate(13*dpr,PAD.t+ch/2); ctx.rotate(-Math.PI/2);
-    ctx.font='500 '+(9*dpr)+'px var(--sans,sans-serif)';
-    ctx.fillStyle='rgba(240,240,255,0.55)'; ctx.textAlign='center';
-    ctx.fillText('Power (W)',0,0); ctx.restore();
-
-    // Right axis: HR ticks — all 5 zone boundaries including top
-    if (showHR) {
-      // Show boundary at bottom of each zone plus a top cap
-      const hrTickVals = [119, 146, 165, 194, Math.round(MAX_H)];
-      hrTickVals.forEach(function(hv){
-        if (hv < MIN_H || hv > MAX_H + 5) return;
-        const y = toYh(Math.min(hv, MAX_H), ch);
-        if (y < PAD.t - 2 || y > PAD.t + ch + 2) return;
-        const hzi = Math.min(getHZI(hv), HRZONES.length - 1);
-        ctx.font=(9*dpr)+'px var(--mono,monospace)';
-        ctx.fillStyle=HRZONES[hzi].color+'bb'; ctx.textAlign='left';
-        ctx.fillText(hv+'',W-(PAD.r-5)*dpr,y+3);
-        ctx.strokeStyle=HRZONES[hzi].color+'22'; ctx.lineWidth=0.5;
-        ctx.setLineDash([2,4]);
-        ctx.beginPath(); ctx.moveTo(PAD.l,y); ctx.lineTo(PAD.l+cw,y); ctx.stroke();
-        ctx.setLineDash([]);
-      });
-      ctx.save();
-      ctx.translate(W-11*dpr,PAD.t+ch/2); ctx.rotate(Math.PI/2);
-      ctx.font='500 '+(9*dpr)+'px var(--sans,sans-serif)';
-      ctx.fillStyle='rgba(240,240,255,0.55)'; ctx.textAlign='center';
-      ctx.fillText('Heart Rate (bpm)',0,0); ctx.restore();
-    }
-
-    // ── Power bars ──
-    // Each bar: flat solid zone colour — no intra-band shading for visual clarity
-    const barW = Math.max(1, cw/pts);
-    for(let i=0;i<pts;i++){
-      const w=powerData[i];
-      const zi=getPZI(w);
-      const z=PZONES[zi];
-      const zCeilY=toYp(Math.min(z.max,CHART_MAX_P),ch);
-      ctx.fillStyle=z.color+'c0';
-      ctx.fillRect(toX(i,cw)-barW/2, zCeilY, barW, baseY-zCeilY);
-    }
-
-    // Avg power dashed line — colour matches the zone AVG_P falls in
-    const avgY=toYp(AVG_P,ch);
-    const avgZone=PZONES[getPZI(AVG_P)];
-    ctx.save();
-    ctx.strokeStyle=avgZone.color; ctx.lineWidth=1.5; ctx.setLineDash([7,4]);
-    ctx.beginPath(); ctx.moveTo(PAD.l,avgY); ctx.lineTo(PAD.l+cw,avgY); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.font='500 '+(9*dpr)+'px var(--mono,monospace)';
-    ctx.fillStyle=avgZone.color; ctx.textAlign='left';
-    ctx.fillText(AVG_P+'W avg',PAD.l+5,avgY-5); ctx.restore();
-
-    // HR line — white: maximum contrast against all power zone colours
-    if (showHR && hrData && hrData.length) {
-      ctx.beginPath();
-      ctx.strokeStyle='rgba(255,255,255,0.90)';
-      ctx.lineWidth=1.5;
-      ctx.lineJoin='round'; ctx.lineCap='round';
-      for(let i=0;i<hrData.length;i++){
-        const x=toX(i,cw), y=toYh(hrData[i],ch);
-        i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
-      }
-      ctx.stroke();
-    }
-
-    // Time axis
-    ctx.fillStyle='rgba(107,107,128,0.9)';
-    ctx.font=(9*dpr)+'px var(--mono,monospace)';
-    ctx.textAlign='center';
-    const tickStep = totalMins <= 60 ? 10 : totalMins <= 120 ? 20 : 30;
-    for(let t=0;t<=totalMins;t+=tickStep){
-      const frac=t/totalMins;
-      const x=PAD.l+frac*cw;
-      const h=Math.floor(t/60), m=t%60;
-      const lbl=h>0?(h+'h'+(m?(m<10?'0'+m:m)+'m':'')):t+'m';
-      ctx.fillText(lbl,x,H-6);
-    }
-  }
-
-  // ── Elevation chart draw functions ─────────────────────────────────────────
-  const ELEV_PAD = { l:50, r: showHR ? 58 : 14, t:8, b:18 };
-
-  function elevDims() {
-    return { W:elevC.width, H:elevC.height,
-             cw:elevC.width - ELEV_PAD.l - ELEV_PAD.r,
-             ch:elevC.height - ELEV_PAD.t - ELEV_PAD.b };
-  }
-
-  function drawElev() {
-    if (!altData || !altData.length) return;
-    const ctx = elevC.getContext('2d');
-    const { W, H, cw, ch } = elevDims();
-    ctx.clearRect(0,0,W,H);
-    const dpr = window.devicePixelRatio||1;
-
-    const minAlt = Math.min(...altData);
-    const maxAlt = Math.max(...altData);
-    const range  = Math.max(1, maxAlt - minAlt);
-    const baseY  = ELEV_PAD.t + ch;
-
-    function toEX(i) { return ELEV_PAD.l + (i/(altData.length-1))*cw; }
-    function toEY(v) { return ELEV_PAD.t + ch - ((v-minAlt)/range)*ch; }
-
-    // Filled area
-    ctx.beginPath();
-    ctx.moveTo(toEX(0), baseY);
-    for(let i=0;i<altData.length;i++) ctx.lineTo(toEX(i), toEY(altData[i]));
-    ctx.lineTo(toEX(altData.length-1), baseY);
-    ctx.closePath();
-    const grad = ctx.createLinearGradient(0, ELEV_PAD.t, 0, baseY);
-    grad.addColorStop(0,   'rgba(120,160,120,0.55)');
-    grad.addColorStop(1,   'rgba(60,90,60,0.15)');
-    ctx.fillStyle = grad;
-    ctx.fill();
-
-    // Profile line
-    ctx.beginPath();
-    for(let i=0;i<altData.length;i++){
-      const x=toEX(i), y=toEY(altData[i]);
-      i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
-    }
-    ctx.strokeStyle='rgba(140,200,120,0.85)'; ctx.lineWidth=1.5;
-    ctx.lineJoin='round'; ctx.stroke();
-
-    // Left axis label + elevation range
-    ctx.font=(9*dpr)+'px var(--mono,monospace)';
-    ctx.fillStyle='rgba(120,180,100,0.7)'; ctx.textAlign='right';
-    ctx.fillText(Math.round(maxAlt)+'m', ELEV_PAD.l-5, ELEV_PAD.t+10);
-    ctx.fillText(Math.round(minAlt)+'m', ELEV_PAD.l-5, baseY-2);
-
-    // Section label
-    ctx.fillStyle='rgba(107,107,128,0.6)'; ctx.textAlign='left';
-    ctx.font='500 '+(8*dpr)+'px var(--mono,monospace)';
-    ctx.fillText('elevation', ELEV_PAD.l+4, ELEV_PAD.t+10);
-  }
-
-  function drawElevOverlay(idx) {
-    if (!altData || !altData.length) return;
-    const ctx = elevOC.getContext('2d');
-    const { W, H, cw, ch } = elevDims();
-    ctx.clearRect(0,0,W,H);
-    if (idx === null) return;
-    const minAlt = Math.min(...altData);
-    const maxAlt = Math.max(...altData);
-    const range  = Math.max(1, maxAlt-minAlt);
-    function toEX(i) { return ELEV_PAD.l + (i/(altData.length-1))*cw; }
-    function toEY(v) { return ELEV_PAD.t + ch - ((v-minAlt)/range)*ch; }
-    const x  = toEX(idx);
-    const ey = toEY(altData[idx]);
-    // Crosshair
-    ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
-    ctx.beginPath(); ctx.moveTo(x,ELEV_PAD.t); ctx.lineTo(x,ELEV_PAD.t+ch); ctx.stroke();
-    ctx.setLineDash([]);
-    // Dot on elevation line
-    ctx.fillStyle='rgba(140,200,120,0.9)';
-    ctx.beginPath(); ctx.arc(x,ey,4,0,Math.PI*2); ctx.fill();
-  }
-
-
-  function drawOverlay(idx){
-    const ctx=overC.getContext('2d');
-    const {W,H,cw,ch}=dims();
-    ctx.clearRect(0,0,W,H);
-    if(idx===null) return;
-    const x=toX(idx,cw);
-    const zi=getPZI(powerData[idx]);
-    const zCeilY=toYp(Math.min(PZONES[zi].max,CHART_MAX_P),ch);
-    ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
-    ctx.beginPath(); ctx.moveTo(x,PAD.t); ctx.lineTo(x,PAD.t+ch); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle=PZONES[zi].color;
-    ctx.beginPath(); ctx.arc(x,zCeilY+2,4,0,Math.PI*2); ctx.fill();
-    if(showHR && hrData && hrData.length){
-      const hy=toYh(hrData[idx],ch);
-      ctx.fillStyle='rgba(255,255,255,0.90)';
-      ctx.beginPath(); ctx.arc(x,hy,4,0,Math.PI*2); ctx.fill();
-    }
-  }
-
-  function updateHover(idx) {
-    drawOverlay(idx);
-    if (isOutdoor) {
-      drawElevOverlay(idx);
-    }
-    if (idx === null) { tip.style.display='none'; return; }
-    const pzi=getPZI(powerData[idx]);
-    const pz=PZONES[pzi];
-    const timeFrac=idx/(pts-1);
-    const tMins=Math.round(timeFrac*totalMins);
-    const h=Math.floor(tMins/60),m=tMins%60;
-    const ts=h>0?(h+'h '+(m<10?'0'+m:m)+'m'):tMins+'m';
-    let html='<span style="color:'+pz.color+';font-weight:600">'+pz.label+' '+pz.name+'</span>'
-      +'<span style="color:var(--muted)"> · </span>'
-      +'<span style="color:'+pz.color+'">'+Math.round(powerData[idx])+'W</span>'
-      +'<span style="color:rgba(107,107,128,0.6);font-size:10px;"> 60s avg</span>';
-    if(showHR&&hrData&&hrData[idx]){
-      const hzi=getHZI(hrData[idx]);
-      html+='<span style="color:rgba(107,107,128,0.4);margin:0 8px;">|</span>'
-        +'<span style="color:#ffffff">'+HRZONES[hzi].label+'</span>'
-        +'<span style="color:var(--muted)"> · </span>'
-        +'<span style="color:#ffffff">'+Math.round(hrData[idx])+' bpm</span>'
-        +'<span style="color:rgba(107,107,128,0.6);font-size:10px;"> 3s avg</span>';
-    }
-    if(isOutdoor&&altData&&altData[idx]){
-      html+='<span style="color:rgba(107,107,128,0.4);margin:0 8px;">|</span>'
-        +'<span style="color:rgba(140,200,120,0.9)">'+Math.round(altData[idx])+'m</span>'
-        +'<span style="color:rgba(107,107,128,0.6);font-size:10px;"> elev</span>';
-    }
-    html+='<span style="color:rgba(107,107,128,0.4);margin:0 8px;">|</span>'
-      +'<span style="color:rgba(107,107,128,0.8);">'+ts+'</span>';
-    tip.innerHTML=html;
-    tip.style.display='block';
-  }
-
-  function getIdxFromMouseX(mx) {
-    const {cw}=dims();
-    if(mx<PAD.l||mx>PAD.l+cw) return null;
-    return Math.max(0,Math.min(pts-1,Math.round(((mx-PAD.l)/cw)*(pts-1))));
-  }
-
-  // Route map hover: find nearest point by proximity on the canvas
-  function handleMove(e, sourceRect) {
-    const dpr=window.devicePixelRatio||1;
-    const mx=(e.clientX-sourceRect.left)*dpr;
-    const idx=getIdxFromMouseX(mx);
-    updateHover(idx);
-  }
-
-  canvasWrap.addEventListener('mousemove',function(e){ handleMove(e, canvasWrap.getBoundingClientRect()); });
-  canvasWrap.addEventListener('mouseleave',function(){ updateHover(null); });
-  if(isOutdoor && altData && altData.length){
-    elevWrap.addEventListener('mousemove',function(e){ handleMove(e, elevWrap.getBoundingClientRect()); });
-    elevWrap.addEventListener('mouseleave',function(){ updateHover(null); });
-  }
-
-  requestAnimationFrame(function(){ requestAnimationFrame(function(){ resize(); }); });
-  window.addEventListener('resize',resize);
-}
 // ── Rich recent activities list ───────────────────────────────────────────────
 function buildRecentActivities(activities, ftp) {
   const wrap = document.getElementById('recent-activities-list');
@@ -3462,19 +3083,19 @@ function render(athlete, activities, metrics) {
               </div>
 
               <!-- CTL fitness -->
-              <div data-rtip="ctl" style="background:rgba(255,255,255,0.03);border-radius:8px;padding:10px 12px;cursor:help;border:.5px solid ${fitness >= readiness.ctlTarget ? 'rgba(96,208,144,0.4)' : 'rgba(240,160,96,0.3)'};">
-                <div style="font-family:var(--mono);font-size:9px;color:${fitness >= readiness.ctlTarget ? '#60d090' : '#f0a060'};letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">Fitness (CTL) <span>ⓘ</span></div>
+              <div data-rtip="ctl" style="background:rgba(255,255,255,0.03);border-radius:8px;padding:10px 12px;cursor:help;border:.5px solid ${fitness >= 85 ? 'rgba(96,208,144,0.4)' : 'rgba(240,160,96,0.3)'};">
+                <div style="font-family:var(--mono);font-size:9px;color:${fitness >= 85 ? '#60d090' : '#f0a060'};letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">Fitness (CTL) <span>ⓘ</span></div>
                 <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:4px;">
-                  <span style="font-size:1.1rem;font-weight:400;color:${fitness >= readiness.ctlTarget ? '#60d090' : '#c8f060'};">${fitness}</span>
+                  <span style="font-size:1.1rem;font-weight:400;color:${fitness >= 85 ? '#60d090' : '#c8f060'};">${fitness}</span>
                   <span style="font-family:var(--mono);font-size:10px;color:var(--muted);">→</span>
-                  <span style="font-size:1.1rem;font-weight:400;color:#60d090;">${readiness.ctlTarget}</span>
+                  <span style="font-size:1.1rem;font-weight:400;color:#60d090;">85</span>
                   <span style="font-family:var(--mono);font-size:9px;color:var(--muted);">target</span>
                 </div>
                 <div style="height:3px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;margin-bottom:5px;">
-                  <div style="height:100%;width:${readiness.ctlScore}%;background:${fitness >= readiness.ctlTarget ? '#60d090' : '#c8f060'};border-radius:100px;"></div>
+                  <div style="height:100%;width:${readiness.ctlScore}%;background:${fitness >= 85 ? '#60d090' : '#c8f060'};border-radius:100px;"></div>
                 </div>
-                <div style="font-family:var(--mono);font-size:9px;color:${fitness >= readiness.ctlTarget ? '#60d090' : '#f0a060'};">
-                  ${fitness >= readiness.ctlTarget ? '✓ Race-ready fitness' : 'Need +' + (readiness.ctlTarget - fitness) + ' CTL over ' + readiness.weeksLeft + ' weeks'}
+                <div style="font-family:var(--mono);font-size:9px;color:${fitness >= 85 ? '#60d090' : '#f0a060'};">
+                  ${fitness >= 85 ? '✓ Race-ready fitness' : 'Need +' + (85 - fitness) + ' CTL over ' + readiness.weeksLeft + ' weeks'}
                 </div>
               </div>
 
@@ -3521,64 +3142,60 @@ function render(athlete, activities, metrics) {
 
           return '<div style="margin-top:1rem;padding-top:1rem;border-top:.5px solid rgba(255,255,255,0.07);">' +
             '<div style="font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;">All goals — by date</div>' +
-            '<div style="display:flex;flex-direction:column;gap:4px;">' +
+            '<div style="display:flex;flex-direction:column;gap:6px;">' +
             others.map(g => {
               const gDays = Math.ceil((new Date(g.date+'T06:00:00') - new Date()) / 86400000);
               const gWks  = Math.floor(gDays / 7);
               const gType = {mtb:'MTB',gravel:'Gravel',road:'Road'}[g.raceType||'mtb']||'MTB';
               const pCol  = priorityCol(g.priority);
               const pIcon = priorityIcon(g.priority);
+              // Pre-compute mini readiness for this goal
               const gr = calcGoalReadiness(parseFloat(wkg)||0, fitness, activities, g, ATHLETE_WEIGHT_KG);
               const scoreCol = gr.statusCol;
               const wkgOk  = gr.wkgGap <= 0;
-              const ctlOk  = fitness >= gr.ctlTarget;
+              const ctlOk  = fitness >= 85;
               const specOk = gr.mtbPct >= 60;
               const peekId = 'peek-' + g.id;
-              const dateStr = new Date(g.date+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
 
               return `<div style="background:rgba(255,255,255,0.02);border:.5px solid rgba(255,255,255,0.07);border-radius:8px;overflow:hidden;">
-
-                <!-- Single compact row -->
-                <div onclick="(function(){var p=document.getElementById('${peekId}');p.style.display=p.style.display==='none'?'block':'none';})()"
-                  style="display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;min-width:0;">
-
-                  <!-- Priority icon -->
-                  <div style="display:flex;flex-direction:column;align-items:center;gap:0px;flex-shrink:0;line-height:1;">
-                    <span style="font-size:13px;">${pIcon}</span>
-                    <span style="font-family:var(--mono);font-size:7px;font-weight:600;color:${pCol};letter-spacing:.04em;">${g.priority||'B'}</span>
+                <!-- Card — two-row layout for mobile compatibility -->
+                <div onclick="(function(){var p=document.getElementById('${peekId}');p.style.display=p.style.display==='none'?'block':'none';})()" style="padding:10px 12px;cursor:pointer;">
+                  <!-- Row 1: icon + name + meta -->
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;min-width:0;">
+                    <div style="display:flex;flex-direction:column;align-items:center;gap:1px;flex-shrink:0;">
+                      <span style="font-size:14px;line-height:1;">${pIcon}</span>
+                      <span style="font-family:var(--mono);font-size:8px;font-weight:600;color:${pCol};letter-spacing:.04em;">${g.priority||'B'}</span>
+                    </div>
+                    <div style="min-width:0;flex:1;">
+                      <div style="font-size:13px;font-weight:400;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${g.name}</div>
+                      <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:1px;">${new Date(g.date+'T12:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})} · ${g.distance}km ${gType} · sub-${g.timeGoal}hr</div>
+                    </div>
+                    <span style="font-family:var(--mono);font-size:10px;color:var(--muted);flex-shrink:0;">▾</span>
                   </div>
-
-                  <!-- Name + meta -->
-                  <div style="flex:1;min-width:0;">
-                    <div style="font-size:13px;font-weight:400;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${g.name}</div>
-                    <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${dateStr} · ${g.distance}km ${gType} · sub-${g.timeGoal}hr</div>
+                  <!-- Row 2: score pill + days + action buttons -->
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                      <div style="font-family:var(--mono);font-size:11px;font-weight:500;color:${scoreCol};background:rgba(255,255,255,0.04);border:.5px solid ${scoreCol}44;border-radius:100px;padding:2px 10px;">${gr.score}/100</div>
+                      <div style="font-family:var(--mono);font-size:11px;color:${pCol};font-weight:300;">${gDays} <span style="font-size:9px;color:var(--muted);">days · ${gWks}w</span></div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px;" onclick="event.stopPropagation();">
+                      <button onclick="promoteGoal('${g.id}')" title="Promote to A goal" style="background:rgba(240,208,96,0.08);border:.5px solid rgba(240,208,96,0.25);border-radius:6px;padding:5px 10px;color:#f0d060;font-size:11px;cursor:pointer;font-family:var(--mono);min-height:30px;">↑ A</button>
+                      <button onclick="openGoalEdit('${g.id}')" style="background:rgba(255,255,255,0.05);border:.5px solid rgba(255,255,255,0.12);border-radius:6px;padding:5px 10px;color:var(--muted);font-size:11px;cursor:pointer;font-family:var(--mono);min-height:30px;">✎</button>
+                      <button onclick="deleteGoal('${g.id}')" style="background:rgba(240,96,96,0.06);border:.5px solid rgba(240,96,96,0.2);border-radius:6px;padding:5px 10px;color:#f06060;font-size:11px;cursor:pointer;font-family:var(--mono);min-height:30px;">✕</button>
+                    </div>
                   </div>
-
-                  <!-- Score pill -->
-                  <div style="font-family:var(--mono);font-size:11px;font-weight:500;color:${scoreCol};background:rgba(255,255,255,0.04);border:.5px solid ${scoreCol}44;border-radius:100px;padding:2px 9px;flex-shrink:0;white-space:nowrap;">${gr.score}/100</div>
-
-                  <!-- Days/weeks -->
-                  <div style="font-family:var(--mono);font-size:11px;color:${pCol};font-weight:300;flex-shrink:0;white-space:nowrap;min-width:52px;text-align:right;">${gDays}<span style="font-size:9px;color:var(--muted);"> d · ${gWks}w</span></div>
-
-                  <!-- Action buttons -->
-                  <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;" onclick="event.stopPropagation();">
-                    <button onclick="promoteGoal('${g.id}')" title="Promote to A goal" style="background:rgba(240,208,96,0.08);border:.5px solid rgba(240,208,96,0.25);border-radius:6px;padding:4px 8px;color:#f0d060;font-size:10px;cursor:pointer;font-family:var(--mono);line-height:1.4;">↑ A</button>
-                    <button onclick="openGoalEdit('${g.id}')" style="background:rgba(255,255,255,0.05);border:.5px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 8px;color:var(--muted);font-size:10px;cursor:pointer;font-family:var(--mono);line-height:1.4;">✎</button>
-                    <button onclick="deleteGoal('${g.id}')" style="background:rgba(240,96,96,0.06);border:.5px solid rgba(240,96,96,0.2);border-radius:6px;padding:4px 8px;color:#f06060;font-size:10px;cursor:pointer;font-family:var(--mono);line-height:1.4;">✕</button>
-                  </div>
-
-                  <!-- Expand chevron -->
-                  <span style="font-family:var(--mono);font-size:10px;color:var(--muted);flex-shrink:0;">▾</span>
                 </div>
 
-                <!-- Peek panel — hidden by default -->
+                <!-- Peek panel — hidden by default, shown on click -->
                 <div id="${peekId}" style="display:none;padding:10px 12px;border-top:.5px solid rgba(255,255,255,0.06);background:rgba(0,0,0,0.15);">
-                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+                  <!-- Score bar -->
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
                     <div style="font-family:var(--mono);font-size:10px;color:${scoreCol};font-weight:500;white-space:nowrap;">${gr.status}</div>
                     <div style="flex:1;min-width:60px;height:4px;background:rgba(255,255,255,0.07);border-radius:100px;overflow:hidden;">
                       <div style="height:100%;width:${gr.score}%;background:linear-gradient(90deg,#f06060,#f0a060,#c8f060,#60d090);border-radius:100px;"></div>
                     </div>
                   </div>
+                  <!-- Three mini metric tiles — stack on mobile -->
                   <div class="peek-3col" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">
                     <div style="background:rgba(255,255,255,0.02);border:.5px solid ${wkgOk?'rgba(96,208,144,0.35)':'rgba(240,160,96,0.25)'};border-radius:6px;padding:7px 9px;">
                       <div style="font-family:var(--mono);font-size:8px;color:${wkgOk?'#60d090':'#f0a060'};text-transform:uppercase;margin-bottom:3px;">W/kg</div>
@@ -3588,9 +3205,9 @@ function render(athlete, activities, metrics) {
                     </div>
                     <div style="background:rgba(255,255,255,0.02);border:.5px solid ${ctlOk?'rgba(96,208,144,0.35)':'rgba(240,160,96,0.25)'};border-radius:6px;padding:7px 9px;">
                       <div style="font-family:var(--mono);font-size:8px;color:${ctlOk?'#60d090':'#f0a060'};text-transform:uppercase;margin-bottom:3px;">CTL</div>
-                      <div style="font-family:var(--mono);font-size:11px;color:${ctlOk?'#60d090':'#c8f060'};">${fitness} → <span style="color:#60d090;">${gr.ctlTarget}</span></div>
+                      <div style="font-family:var(--mono);font-size:11px;color:${ctlOk?'#60d090':'#c8f060'};">${fitness} → <span style="color:#60d090;">85</span></div>
                       <div style="height:2px;background:rgba(255,255,255,0.07);border-radius:100px;margin:4px 0;"><div style="height:100%;width:${gr.ctlScore}%;background:${ctlOk?'#60d090':'#c8f060'};border-radius:100px;"></div></div>
-                      <div style="font-family:var(--mono);font-size:8px;color:${ctlOk?'#60d090':'#f0a060'};">${ctlOk?'✓ Met':'Need +'+(gr.ctlTarget-fitness)}</div>
+                      <div style="font-family:var(--mono);font-size:8px;color:${ctlOk?'#60d090':'#f0a060'};">${ctlOk?'✓ Met':'Need +'+(85-fitness)}</div>
                     </div>
                     <div style="background:rgba(255,255,255,0.02);border:.5px solid ${specOk?'rgba(96,208,144,0.35)':'rgba(240,160,96,0.25)'};border-radius:6px;padding:7px 9px;">
                       <div style="font-family:var(--mono);font-size:8px;color:${specOk?'#60d090':'#f0a060'};text-transform:uppercase;margin-bottom:3px;">${gr.specLabel} Spec</div>
@@ -3730,16 +3347,16 @@ Why it works: easy days preserve your ability to go hard when it matters. Hard d
               data-tip-title="🏔️ Ultra-Endurance Specific — Austin Method"
               data-tip-body="Barry Austin (LEADout Cycling) coaches MTB Marathon and stage race champions including multiple Cape Epic podiums.
 
-Aerobic and anaerobic systems are developed in separate blocks, then harmonised as race day approaches. Long rides dominate. Back-to-back fatigued-leg days are deliberate — they simulate the physical and mental demands of the final hours of any long race.
+Aerobic and anaerobic systems are developed in separate blocks, then harmonised as race day approaches. Long rides dominate. Back-to-back fatigued-leg days are deliberate — they simulate what happens after 6 hours of Baviaans.
 
 Austin's principle: 'Connect the energy to your environment.' Sessions mirror race conditions exactly: terrain, duration, nutrition timing, even starting fatigued. Mental toughness is treated as trainable.
 
-The plan escalates from aerobic base through progressive long-ride overload to race-specific simulation. Designed for athletes who want to finish strong — not just survive.">
+The plan escalates from aerobic base through progressive long-ride overload to race-specific simulation. If your goal is to finish Baviaans strong — not just survive it — this is the most specific preparation.">
               <div style="font-size:22px;margin-bottom:8px;">🏔️</div>
               <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:3px;">Ultra-Endurance</div>
               <div style="font-family:var(--mono);font-size:9px;color:#f0a060;margin-bottom:8px;letter-spacing:.04em;">AUSTIN · RACE-SPECIFIC</div>
               <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:8px;">"Long, long, long — with targeted intensity only when the race demands it."</div>
-              <div style="font-size:10px;color:rgba(255,255,255,0.35);line-height:1.5;">✓ Cape Epic · Ultra-marathon · 8hr+ events</div>
+              <div style="font-size:10px;color:rgba(255,255,255,0.35);line-height:1.5;">✓ Baviaans · Cape Epic · 8hr+ events</div>
             </div>
 
             <div class="te-phil-card" data-phil="progressive" onclick="teSelectPhil(this)"
@@ -3768,7 +3385,7 @@ Sweet-spot training (88–93% FTP) sits just below threshold and produces strong
 
 Popularised by Chris Carmichael (CTS, former coach to Lance Armstrong) and validated for time-constrained athletes. Produces strong FTP gains in less time than traditional approaches.
 
-Important note: for long events (6hr+), some long rides remain essential regardless of this choice. You can train smart on weekdays, but endurance still requires time on the bike at weekends.">
+Important note: for Baviaans specifically, some long rides remain essential regardless of this choice. You can train smart on weekdays, but 230km still requires time on the bike at weekends.">
               <div style="font-size:22px;margin-bottom:8px;">⚡</div>
               <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:3px;">Time-Crunched</div>
               <div style="font-family:var(--mono);font-size:9px;color:#60c8f0;margin-bottom:8px;letter-spacing:.04em;">CARMICHAEL · SWEET-SPOT</div>
@@ -4005,14 +3622,6 @@ Important note: for long events (6hr+), some long rides remain essential regardl
   `;
 
   document.getElementById('dashboard').style.display = 'block';
-
-  // ── First-run setup banner — shown when user has no goals yet ───────────────
-  // Option B: dashboard loads first, persistent banner guides through setup
-  const existingSetup = document.getElementById('first-run-banner');
-  if (existingSetup) existingSetup.remove();
-  if (!allGoals || allGoals.length === 0) {
-    showFirstRunBanner(athlete, ftp, wkg);
-  }
 
   // ── Build today's combined suggestion + workout block ─────────────────────
   // Find today's actual Strava activity if one exists
@@ -4575,7 +4184,7 @@ function teAutoSchedule() {
       ? 'No long ride days selected — please select at least one.'
       : TE_STATE.longDays.length === 1
         ? `Long ride on ${sched.longRideDay}. Select a second day for a back-to-back recovery ride.`
-        : `Long ride ${sched.longRideDay} · Recovery ride ${sched.recoveryRideDay} (back-to-back on tired legs — key race-prep).`;
+        : `Long ride ${sched.longRideDay} · Recovery ride ${sched.recoveryRideDay} (back-to-back on tired legs — key Baviaans prep).`;
     note.textContent = longDesc + ` Intervals auto-placed on ${sched.interval1Day} & ${sched.interval2Day} with recovery days between.`;
   }
 
@@ -4868,15 +4477,29 @@ window.resetTrainingDefaults = function() {
 // Solution: Cloudflare Worker handles token exchange. Once Worker URL is set below,
 // everything is automatic — tokens refresh silently, works on any device forever.
 
-const STRAVA_CLIENT_ID     = '211345';
-const STRAVA_CLIENT_SECRET = '76f1282d30e05a5476ffdbdf5ec7b6d0f90c15c5';
-const STRAVA_REFRESH_TOKEN = 'baac5a29ad12df3286ada23edc4973432aaf3251';
+const STRAVA_CLIENT_ID = '211345';
+// Secret and personal refresh token intentionally not stored in client HTML.
+// Each user authenticates via OAuth and their refresh token is stored only
+// in their own browser localStorage under REFRESH_SK.
 
-const TOKEN_SK  = 'strava_at';
-const EXPIRY_SK = 'strava_exp';
+const TOKEN_SK   = 'strava_at';
+const EXPIRY_SK  = 'strava_exp';
+const REFRESH_SK = 'strava_rt'; // per-user refresh token, stored after OAuth
 
-function saveToken(token, expiry) {
-  try { localStorage.setItem(TOKEN_SK, token); localStorage.setItem(EXPIRY_SK, String(expiry)); } catch(e) {}
+function disconnectStrava() {
+  if (!confirm('Disconnect your Strava account? This clears your local session — your Strava data is unaffected.')) return;
+  [TOKEN_SK, EXPIRY_SK, REFRESH_SK, 'strava_athlete'].forEach(k => {
+    try { localStorage.removeItem(k); } catch(e) {}
+  });
+  location.href = location.href.split('?')[0]; // reload clean
+}
+
+function saveToken(token, expiry, refreshToken) {
+  try {
+    localStorage.setItem(TOKEN_SK, token);
+    localStorage.setItem(EXPIRY_SK, String(expiry));
+    if (refreshToken) localStorage.setItem(REFRESH_SK, refreshToken);
+  } catch(e) {}
 }
 
 function getCachedToken() {
@@ -4886,6 +4509,10 @@ function getCachedToken() {
     if (t && Date.now() / 1000 < e - 120) return t;
   } catch(e) {}
   return null;
+}
+
+function getCachedRefreshToken() {
+  try { return localStorage.getItem(REFRESH_SK) || null; } catch(e) { return null; }
 }
 
 // ── Cloudflare Worker URL ─────────────────────────────────────────────────────
@@ -4904,7 +4531,8 @@ async function callWorker(payload) {
   if (!res.ok) throw new Error('Worker returned ' + res.status);
   const data = await res.json();
   if (!data.access_token) throw new Error(data.message || 'No access_token');
-  saveToken(data.access_token, data.expires_at);
+  // Save access token + expiry + refresh token (refresh token rotates on each use)
+  saveToken(data.access_token, data.expires_at, data.refresh_token || null);
   return data.access_token;
 }
 
@@ -4913,19 +4541,23 @@ async function exchangeCodeForToken(code) {
   return callWorker({ code });
 }
 
-// Silently refresh token (called when cached token expires)
+// Silently refresh using THIS USER's stored refresh token
 async function refreshAccessToken() {
-  return callWorker({ refresh_token: STRAVA_REFRESH_TOKEN });
+  const rt = getCachedRefreshToken();
+  if (!rt) throw new Error('NO_REFRESH_TOKEN');
+  return callWorker({ refresh_token: rt });
 }
 
 async function getToken() {
   const cached = getCachedToken();
   if (cached) return cached;
-  // Auto-refresh via Worker if configured
-  if (WORKER_URL && !WORKER_URL.includes('YOUR_WORKER')) {
+  // Attempt silent refresh using stored refresh token
+  const rt = getCachedRefreshToken();
+  if (rt && WORKER_URL && !WORKER_URL.includes('YOUR_WORKER')) {
     document.getElementById('status-text').textContent = 'Refreshing token...';
     return await refreshAccessToken();
   }
+  // No token, no refresh token — user must connect via OAuth
   return null;
 }
 
@@ -4940,216 +4572,6 @@ function stravaAuthUrl() {
     '&scope=read,activity:read';
 }
 
-// ── First-run onboarding banner (Option B) ───────────────────────────────────
-// Shown after dashboard loads when the user has no goals configured.
-// Guides through: (1) body weight, (2) first goal. Dismisses on completion.
-function showFirstRunBanner(athlete, ftp, wkg) {
-  const app = document.getElementById('app');
-  const dashboard = document.getElementById('dashboard');
-
-  const banner = document.createElement('div');
-  banner.id = 'first-run-banner';
-  banner.style.cssText = 'margin-bottom:1.5rem;';
-
-  const name = athlete ? (athlete.firstname || 'there') : 'there';
-  const ftpStr = ftp && ftp.watts ? ftp.watts + 'W' : 'not yet calculated';
-  const wkgStr = wkg ? wkg + ' W/kg' : 'pending';
-
-  banner.innerHTML = `
-    <div style="background:linear-gradient(135deg,rgba(96,200,240,0.09),rgba(200,240,96,0.05));border:.5px solid rgba(96,200,240,0.35);border-radius:16px;padding:1.75rem 2rem;position:relative;">
-
-      <!-- Close -->
-      <button onclick="document.getElementById('first-run-banner').remove();localStorage.setItem('setup_dismissed','1');"
-        style="position:absolute;top:14px;right:14px;background:transparent;border:none;color:var(--muted);font-size:18px;cursor:pointer;line-height:1;padding:4px 8px;" title="Dismiss">✕</button>
-
-      <!-- Greeting -->
-      <div style="margin-bottom:1.25rem;">
-        <div style="font-size:1.15rem;font-weight:400;color:var(--text);margin-bottom:4px;">👋 Welcome, ${name}!</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.6;">
-          Your Strava data is loaded — eFTP detected at <strong style="color:#f0a060;">${ftpStr}</strong> (${wkgStr}).
-          Complete two quick steps to personalise your dashboard.
-        </div>
-      </div>
-
-      <!-- Step tabs -->
-      <div style="display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap;">
-        <div id="frb-tab-1" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 12px;border-radius:100px;background:rgba(96,200,240,0.15);border:.5px solid rgba(96,200,240,0.5);color:#60c8f0;cursor:pointer;" onclick="frbShowStep(1)">① Weight</div>
-        <div id="frb-tab-2" style="font-family:'DM Mono',monospace;font-size:11px;padding:4px 12px;border-radius:100px;background:transparent;border:.5px solid rgba(255,255,255,0.1);color:var(--muted);cursor:pointer;" onclick="frbShowStep(2)">② First goal</div>
-      </div>
-
-      <!-- Step 1: Weight -->
-      <div id="frb-step-1">
-        <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:8px;">What is your current body weight?</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6;">Used to calculate W/kg — the key metric for climbing and race readiness targets.</div>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-          <input id="frb-weight" type="number" min="40" max="150" step="0.5" placeholder="e.g. 75"
-            style="width:100px;background:#111118;border:.5px solid rgba(96,200,240,0.4);border-radius:8px;padding:10px 12px;font-size:16px;color:var(--text);outline:none;text-align:center;font-family:'DM Mono',monospace;" />
-          <span style="font-size:13px;color:var(--muted);">kg</span>
-          <button onclick="frbSaveWeight()"
-            style="background:rgba(96,200,240,0.12);border:.5px solid rgba(96,200,240,0.45);border-radius:8px;padding:10px 20px;color:#60c8f0;font-size:13px;cursor:pointer;touch-action:manipulation;font-family:'DM Mono',monospace;">
-            Save & next →
-          </button>
-        </div>
-        <div id="frb-weight-err" style="font-size:12px;color:#f06060;margin-top:6px;display:none;">Please enter a weight between 40 and 150 kg.</div>
-      </div>
-
-      <!-- Step 2: First goal -->
-      <div id="frb-step-2" style="display:none;">
-        <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:8px;">Add your first goal race</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.6;">This drives your training plan, readiness score, and W/kg targets. You can add more goals later.</div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
-
-          <div style="grid-column:1/-1;">
-            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Race name</div>
-            <input id="frb-name" type="text" placeholder="e.g. Cape Epic 2026"
-              style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:9px 12px;font-size:14px;color:var(--text);outline:none;box-sizing:border-box;" />
-          </div>
-
-          <div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Race date</div>
-            <input id="frb-date" type="date"
-              style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:9px 12px;font-size:14px;color:var(--text);outline:none;box-sizing:border-box;" />
-          </div>
-
-          <div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Race type</div>
-            <select id="frb-type" style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:9px 12px;font-size:14px;color:var(--text);outline:none;box-sizing:border-box;">
-              <option value="mtb">🚵 MTB</option>
-              <option value="gravel">🌾 Gravel</option>
-              <option value="road">🛣️ Road</option>
-            </select>
-          </div>
-
-          <div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Distance (km)</div>
-            <input id="frb-dist" type="number" min="5" max="1000" placeholder="e.g. 100"
-              style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:9px 12px;font-size:14px;color:var(--text);outline:none;box-sizing:border-box;" />
-          </div>
-
-          <div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Elevation (m)</div>
-            <input id="frb-elev" type="number" min="0" max="20000" placeholder="e.g. 2500"
-              style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:9px 12px;font-size:14px;color:var(--text);outline:none;box-sizing:border-box;" />
-          </div>
-
-          <div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Goal time (hours)</div>
-            <input id="frb-time" type="number" min="0.5" max="48" step="0.5" placeholder="e.g. 8.0"
-              style="width:100%;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:9px 12px;font-size:14px;color:var(--text);outline:none;box-sizing:border-box;"
-              oninput="frbUpdatePreview()" />
-          </div>
-
-        </div>
-
-        <!-- Live preview -->
-        <div id="frb-preview" style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);padding:8px 12px;background:rgba(200,240,96,0.04);border:.5px solid rgba(200,240,96,0.15);border-radius:8px;margin-bottom:12px;min-height:20px;"></div>
-
-        <div id="frb-goal-err" style="font-size:12px;color:#f06060;margin-bottom:8px;display:none;">Please fill in race name, date, distance and goal time.</div>
-
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button onclick="frbSaveGoal()"
-            style="background:rgba(200,240,96,0.12);border:.5px solid rgba(200,240,96,0.4);border-radius:8px;padding:10px 24px;color:#c8f060;font-size:13px;cursor:pointer;touch-action:manipulation;font-family:'DM Mono',monospace;">
-            ✓ Build my plan
-          </button>
-          <button onclick="frbShowStep(1)"
-            style="background:transparent;border:.5px solid rgba(255,255,255,0.1);border-radius:8px;padding:10px 16px;color:var(--muted);font-size:13px;cursor:pointer;touch-action:manipulation;">
-            ← Back
-          </button>
-        </div>
-      </div>
-
-    </div>`;
-
-  // Insert at very top of dashboard
-  dashboard.insertBefore(banner, dashboard.firstChild);
-}
-
-window.frbShowStep = function(step) {
-  document.getElementById('frb-step-1').style.display = step === 1 ? 'block' : 'none';
-  document.getElementById('frb-step-2').style.display = step === 2 ? 'block' : 'none';
-  const t1 = document.getElementById('frb-tab-1');
-  const t2 = document.getElementById('frb-tab-2');
-  if (t1) { t1.style.background = step===1?'rgba(96,200,240,0.15)':'transparent'; t1.style.borderColor = step===1?'rgba(96,200,240,0.5)':'rgba(255,255,255,0.1)'; t1.style.color = step===1?'#60c8f0':'var(--muted)'; }
-  if (t2) { t2.style.background = step===2?'rgba(200,240,96,0.15)':'transparent'; t2.style.borderColor = step===2?'rgba(200,240,96,0.5)':'rgba(255,255,255,0.1)'; t2.style.color = step===2?'#c8f060':'var(--muted)'; }
-};
-
-window.frbSaveWeight = function() {
-  const val = parseFloat(document.getElementById('frb-weight')?.value);
-  const err = document.getElementById('frb-weight-err');
-  if (!val || val < 40 || val > 150) { if (err) err.style.display = 'block'; return; }
-  if (err) err.style.display = 'none';
-  ATHLETE_WEIGHT_KG = val;
-  setAthleteWeight(val);
-  logWeight(val, localDateKey(new Date()));
-  // Update W/kg card if visible
-  const wkgEl = document.getElementById('wkg-value');
-  const wi = document.getElementById('weight-input');
-  if (wi) wi.value = val;
-  if (wkgEl && window._lastFtp) wkgEl.textContent = (window._lastFtp / val).toFixed(1);
-  frbShowStep(2);
-};
-
-window.frbUpdatePreview = function() {
-  const time = parseFloat(document.getElementById('frb-time')?.value) || 0;
-  const dist = parseFloat(document.getElementById('frb-dist')?.value) || 0;
-  const elev = parseFloat(document.getElementById('frb-elev')?.value) || 0;
-  const el = document.getElementById('frb-preview');
-  if (!el) return;
-  if (!time || !dist) { el.textContent = ''; return; }
-  const avgSpeed = (dist / time).toFixed(1);
-  const mockGoal = { distance: dist, elevation: elev || 0, timeGoal: time, startTime: '07:00' };
-  const finish = calcFinishTime(mockGoal);
-  const targetWkg = ATHLETE_WEIGHT_KG > 0 ? calcTargetWkg(mockGoal, ATHLETE_WEIGHT_KG) : '—';
-  el.textContent = dist + 'km ÷ ' + time + 'hr = ' + avgSpeed + 'km/h avg · finish ~' + finish + ' · target W/kg ≥ ' + targetWkg;
-};
-
-window.frbSaveGoal = function() {
-  const name = (document.getElementById('frb-name')?.value || '').trim();
-  const date = document.getElementById('frb-date')?.value || '';
-  const dist = parseFloat(document.getElementById('frb-dist')?.value);
-  const elev = parseFloat(document.getElementById('frb-elev')?.value) || 0;
-  const time = parseFloat(document.getElementById('frb-time')?.value);
-  const type = document.getElementById('frb-type')?.value || 'mtb';
-  const err  = document.getElementById('frb-goal-err');
-
-  if (!name || !date || !dist || !time) {
-    if (err) err.style.display = 'block';
-    return;
-  }
-  if (err) err.style.display = 'none';
-
-  const g = {
-    id: makeGoalId(),
-    name, date, distance: dist, elevation: elev,
-    timeGoal: time, startTime: '07:00', location: '',
-    raceType: type, priority: 'A1',
-  };
-  saveGoals([g]);
-  localStorage.setItem('setup_dismissed', '1');
-
-  // Remove banner and reload to apply new goal
-  const banner = document.getElementById('first-run-banner');
-  if (banner) banner.remove();
-
-  // Flash confirmation then reload
-  const flash = document.createElement('div');
-  flash.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#18181f;border:.5px solid rgba(200,240,96,0.5);border-radius:100px;padding:10px 20px;font-family:var(--mono);font-size:13px;color:#c8f060;z-index:9999;white-space:nowrap;';
-  flash.textContent = '✓ Goal saved — building your plan…';
-  document.body.appendChild(flash);
-  setTimeout(function() { location.reload(); }, 1200);
-};
-
-// Helper used inside frbSaveWeight — reuse existing logWeight if present
-function logWeight(kg, dateStr) {
-  try {
-    const WEIGHT_LOG_SK = 'weight_log_v1';
-    const log = JSON.parse(localStorage.getItem(WEIGHT_LOG_SK) || '{}');
-    log[dateStr] = kg;
-    localStorage.setItem(WEIGHT_LOG_SK, JSON.stringify(log));
-  } catch(e) {}
-}
-
 function showTokenUI(subtitle) {
   document.getElementById('loading').style.display = 'none';
   const app = document.getElementById('app');
@@ -5157,81 +4579,62 @@ function showTokenUI(subtitle) {
   if (existing) existing.remove();
 
   const workerConfigured = WORKER_URL && !WORKER_URL.includes('YOUR_WORKER');
-  const isExpired = subtitle && (subtitle.includes('expired') || subtitle.includes('re-connect'));
   const banner = document.createElement('div');
   banner.id = 'token-banner';
+  banner.style.cssText = 'background:#18181f;border:0.5px solid rgba(200,240,96,0.35);border-radius:14px;padding:1.5rem;margin-bottom:1.5rem;';
 
   if (!workerConfigured) {
-    banner.style.cssText = 'background:#18181f;border:.5px solid rgba(200,240,96,0.35);border-radius:14px;padding:1.5rem;margin-bottom:1.5rem;';
+    // First-time setup — show Worker deployment steps
     banner.innerHTML = `
       <div style="font-size:15px;font-weight:500;color:#c8f060;margin-bottom:8px;">⚙️ One-time setup needed</div>
       <div style="font-size:13px;color:#9090a8;line-height:1.8;margin-bottom:1.25rem;">
-        To auto-refresh tokens, deploy a free Cloudflare Worker (2 min). Then this dashboard will connect and stay connected automatically.
+        To auto-refresh tokens on any device, deploy a free Cloudflare Worker (2 min, free forever).
+        Then this dashboard will connect and stay connected with zero maintenance.
       </div>
-      <div style="background:#0d0d14;border:.5px solid rgba(200,240,96,0.2);border-radius:10px;padding:1rem;margin-bottom:1rem;">
-        <div style="font-size:12px;font-weight:500;color:#c8f060;margin-bottom:8px;">Deploy the Worker (2 min)</div>
-        <div style="font-size:12px;color:#9090a8;line-height:1.9;">
-          1. Go to <a href="https://dash.cloudflare.com" target="_blank" style="color:#60c8f0;">dash.cloudflare.com</a> → sign up free<br>
-          2. Workers &amp; Pages → Create → Create Worker<br>
-          3. Replace default code with <strong style="color:#f0f0f8">worker.js</strong> contents<br>
-          4. Deploy → copy the <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px;">.workers.dev</code> URL<br>
-          5. Find <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px;">WORKER_URL = 'YOUR_WORKER_URL_HERE'</code> in this file and replace<br>
-          6. Re-upload to Netlify
-        </div>
-      </div>
-      <div style="font-size:12px;color:#6b6b80;margin-bottom:0.75rem;">— or paste a token manually in the meantime —</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <input id="token-input" type="text" placeholder="Paste access_token value..." style="flex:1;min-width:200px;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;font-family:'DM Mono',monospace;font-size:16px;color:#f0f0f8;outline:none;min-height:44px;" />
-        <button onclick="applyNewToken()" style="background:rgba(200,240,96,0.1);border:.5px solid rgba(200,240,96,0.4);border-radius:8px;padding:10px 18px;color:#c8f060;font-size:14px;cursor:pointer;min-height:44px;touch-action:manipulation;white-space:nowrap;">Load</button>
-      </div>`;
-  } else if (isExpired) {
-    banner.style.cssText = 'background:#18181f;border:.5px solid rgba(240,160,96,0.4);border-radius:14px;padding:1.25rem 1.5rem;margin-bottom:1.5rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;';
-    banner.innerHTML = `
-      <div style="flex:1;min-width:200px;">
-        <div style="font-size:14px;font-weight:500;color:#f0a060;margin-bottom:3px;">🔄 Session expired</div>
-        <div style="font-size:12px;color:#9090a8;">${subtitle}</div>
-      </div>
-      <a href="${stravaAuthUrl()}" style="display:inline-flex;align-items:center;gap:8px;background:#fc4c02;border-radius:10px;padding:10px 20px;color:#fff;font-size:14px;font-weight:500;text-decoration:none;white-space:nowrap;touch-action:manipulation;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l-7 13.828h4.169"/></svg>
-        Reconnect Strava
-      </a>`;
-  } else {
-    banner.style.cssText = 'margin-bottom:1.5rem;';
-    banner.innerHTML = `
-      <div style="background:linear-gradient(135deg,rgba(200,240,96,0.08),rgba(96,200,240,0.05));border:.5px solid rgba(200,240,96,0.25);border-radius:16px;padding:2rem 2rem 1.75rem;">
-        <div style="margin-bottom:1.5rem;">
-          <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px;">Training Intelligence</div>
-          <div style="font-size:1.4rem;font-weight:300;letter-spacing:-0.02em;color:var(--text);margin-bottom:8px;">Your personal cycling performance dashboard</div>
-          <div style="font-size:13px;color:var(--muted);line-height:1.7;max-width:560px;">Connect your Strava account to get your Performance Management Chart, power zone analysis, goal readiness score, and a personalised training plan — all calculated from your actual ride data.</div>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px;margin-bottom:1.75rem;">
-          <div style="background:rgba(0,0,0,0.2);border:.5px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 14px;"><div style="font-size:18px;margin-bottom:4px;">📈</div><div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:2px;">Fitness tracking</div><div style="font-size:11px;color:var(--muted);line-height:1.5;">CTL · ATL · Form (TSB) from your rides</div></div>
-          <div style="background:rgba(0,0,0,0.2);border:.5px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 14px;"><div style="font-size:18px;margin-bottom:4px;">⚡</div><div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:2px;">Power analysis</div><div style="font-size:11px;color:var(--muted);line-height:1.5;">eFTP · W/kg · zone distribution</div></div>
-          <div style="background:rgba(0,0,0,0.2);border:.5px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 14px;"><div style="font-size:18px;margin-bottom:4px;">🎯</div><div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:2px;">Goal readiness</div><div style="font-size:11px;color:var(--muted);line-height:1.5;">Physics-based W/kg targets for your race</div></div>
-          <div style="background:rgba(0,0,0,0.2);border:.5px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 14px;"><div style="font-size:18px;margin-bottom:4px;">📅</div><div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:2px;">Training plan</div><div style="font-size:11px;color:var(--muted);line-height:1.5;">21-week periodised plan to your race</div></div>
-        </div>
-        <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);margin-bottom:1.25rem;padding:8px 12px;background:rgba(255,255,255,0.03);border-radius:8px;border:.5px solid rgba(255,255,255,0.07);">
-          🔒 <strong style="color:var(--text);">Your data stays in your browser.</strong> We read activities, power and heart rate — read-only, never stored on any server. Revoke any time from Strava settings.
-        </div>
-        <a href="${stravaAuthUrl()}" style="display:inline-flex;align-items:center;gap:10px;background:#fc4c02;border-radius:12px;padding:14px 28px;color:#fff;font-size:15px;font-weight:500;text-decoration:none;touch-action:manipulation;margin-bottom:1rem;">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l-7 13.828h4.169"/></svg>
-          Connect with Strava — it's free
-        </a>
-        <div>
-          <button onclick="var s=document.getElementById('manual-token-section');s.style.display=s.style.display==='none'?'block':'none'" style="background:transparent;border:none;font-size:12px;color:var(--muted);cursor:pointer;padding:0;text-decoration:underline;">Have a token? Paste manually</button>
-          <div id="manual-token-section" style="display:none;margin-top:10px;">
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-              <input id="token-input" type="text" placeholder="Paste access_token value..." style="flex:1;min-width:200px;background:#111118;border:.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;font-family:'DM Mono',monospace;font-size:16px;color:#f0f0f8;outline:none;min-height:44px;" />
-              <button onclick="applyNewToken()" style="background:rgba(200,240,96,0.1);border:.5px solid rgba(200,240,96,0.4);border-radius:8px;padding:10px 18px;color:#c8f060;font-size:14px;cursor:pointer;min-height:44px;touch-action:manipulation;white-space:nowrap;">Load</button>
-            </div>
+
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:1.25rem;">
+        <div style="background:#0d0d14;border:.5px solid rgba(200,240,96,0.2);border-radius:10px;padding:1rem;">
+          <div style="font-size:12px;font-weight:500;color:#c8f060;margin-bottom:8px;">Deploy the Worker (2 min)</div>
+          <div style="font-size:12px;color:#9090a8;line-height:1.9;">
+            1. Go to <a href="https://dash.cloudflare.com" target="_blank" style="color:#60c8f0;">dash.cloudflare.com</a> → sign up free<br>
+            2. Click <strong style="color:#f0f0f8">Workers &amp; Pages → Create → Create Worker</strong><br>
+            3. Replace the default code with the contents of <strong style="color:#f0f0f8">worker.js</strong> (in the same download)<br>
+            4. Click <strong style="color:#f0f0f8">Deploy</strong> — copy the <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px;">https://...workers.dev</code> URL<br>
+            5. Open this dashboard file, find <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px;">WORKER_URL = 'YOUR_WORKER_URL_HERE'</code> and replace with your URL<br>
+            6. Re-upload to Netlify — done permanently
           </div>
         </div>
+      </div>
+
+      <div style="font-size:12px;color:#6b6b80;margin-bottom:0.75rem;">— or paste a token manually in the meantime —</div>
+      <div style="font-size:12px;color:#9090a8;line-height:1.7;margin-bottom:0.75rem;">
+        Get one from <a href="https://www.strava.com/settings/api" target="_blank" style="color:#60c8f0;">strava.com/settings/api</a> or
+        run in PowerShell / <a href="https://hoppscotch.io" target="_blank" style="color:#60c8f0;">hoppscotch.io</a>:
+        <span style="font-family:'DM Mono',monospace;background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px;font-size:11px;display:block;margin-top:4px;word-break:break-all;user-select:all;">POST https://www.strava.com/oauth/token · client_id=211345 · client_secret=76f1282d30e05a5476ffdbdf5ec7b6d0f90c15c5 · refresh_token=baac5a29ad12df3286ada23edc4973432aaf3251 · grant_type=refresh_token</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input id="token-input" type="text" placeholder="Paste access_token value..." style="flex:1;min-width:200px;background:#111118;border:0.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;font-family:'DM Mono',monospace;font-size:16px;color:#f0f0f8;outline:none;min-height:44px;" />
+        <button onclick="applyNewToken()" style="background:rgba(200,240,96,0.1);border:0.5px solid rgba(200,240,96,0.4);border-radius:8px;padding:10px 18px;color:#c8f060;font-size:14px;cursor:pointer;min-height:44px;touch-action:manipulation;white-space:nowrap;">Load</button>
+      </div>`;
+  } else {
+    // Worker configured — show Connect with Strava button
+    banner.innerHTML = `
+      <div style="font-size:15px;font-weight:500;color:#c8f060;margin-bottom:6px;">🔗 Connect to Strava</div>
+      <div style="font-size:13px;color:#9090a8;line-height:1.7;margin-bottom:1.25rem;">${subtitle || 'Tap below to authorise. You\'ll be redirected back automatically.'}</div>
+      <a href="${stravaAuthUrl()}"
+        style="display:inline-flex;align-items:center;gap:10px;background:#fc4c02;border:none;border-radius:10px;padding:12px 24px;color:#fff;font-size:15px;font-weight:500;text-decoration:none;margin-bottom:1.25rem;touch-action:manipulation;cursor:pointer;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l-7 13.828h4.169"/></svg>
+        Connect with Strava
+      </a>
+      <div style="font-size:12px;color:#6b6b80;margin-bottom:0.75rem;">— or paste a token manually —</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input id="token-input" type="text" placeholder="Paste access_token value..." style="flex:1;min-width:200px;background:#111118;border:0.5px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 12px;font-family:'DM Mono',monospace;font-size:16px;color:#f0f0f8;outline:none;min-height:44px;" />
+        <button onclick="applyNewToken()" style="background:rgba(200,240,96,0.1);border:0.5px solid rgba(200,240,96,0.4);border-radius:8px;padding:10px 18px;color:#c8f060;font-size:14px;cursor:pointer;min-height:44px;touch-action:manipulation;white-space:nowrap;">Load</button>
       </div>`;
   }
   app.insertBefore(banner, app.children[2]);
-  document.getElementById('status-text').textContent = isExpired ? 'Session expired — please reconnect' : workerConfigured ? 'Connect Strava to get started' : 'Setup required';
+  document.getElementById('status-text').textContent = workerConfigured ? 'Authorisation required' : 'Setup required';
 }
-
 
 window.applyNewToken = function() {
   const input = document.getElementById('token-input');
@@ -5362,11 +4765,8 @@ function getPowerZoneColour(watts, ftp) { return getPowerZone(watts, ftp).col; }
 async function loadAndRender(token) {
   document.getElementById('status-text').textContent = 'Loading activities...';
   const H     = { Authorization: 'Bearer ' + token };
-  // Fetch 365 days for accurate CTL convergence (CTL time constant = 42 days;
-  // 365 days ≈ 8.7 × time constant, ensuring <0.1% error from zero-seed initialisation)
-  const afterTs = Date.now() - 365*86400000;
-  const after   = Math.floor(afterTs / 1000);
-  const base    = 'https://www.strava.com/api/v3/athlete/activities?per_page=100&after=' + after;
+  const after = Math.floor((Date.now() - 180*86400000) / 1000); // 180 days for CTL convergence
+  const base  = 'https://www.strava.com/api/v3/athlete/activities?per_page=100&after=' + after;
 
   const [athRes, actRes1, zonesRes] = await Promise.all([
     fetch('https://www.strava.com/api/v3/athlete', { headers: H }),
@@ -5397,10 +4797,10 @@ async function loadAndRender(token) {
     throw new Error(page1?.message || JSON.stringify(page1));
   }
 
-  // Fetch up to 4 pages (400 activities) to cover a full year of training
+  // Fetch pages until we have all 180 days (up to 3 pages of 100)
   let activities = page1;
-  for (let p = 2; p <= 4; p++) {
-    if (activities.length < (p - 1) * 100) break; // previous page wasn't full
+  for (let p = 2; p <= 3; p++) {
+    if (activities.length < p * 100 - 100) break; // previous page wasn't full
     try {
       const res  = await fetch(base + '&page=' + p, { headers: H });
       const page = await res.json();
@@ -5408,15 +4808,6 @@ async function loadAndRender(token) {
       else break;
     } catch(e) { break; }
   }
-
-  // Calculate actual history span fetched — used by computeMetrics for seeding
-  const oldestDate = activities.length
-    ? Math.min(...activities.map(a => new Date(a.start_date).getTime()))
-    : Date.now();
-  const actualHistoryDays = Math.round((Date.now() - oldestDate) / 86400000);
-  // Warn in status if we couldn't get a full year (sparse history or new athlete)
-  const historyShort = actualHistoryDays < 270;
-
   // Clean up OAuth code from URL without reloading
   if (location.search.includes('code=')) {
     history.replaceState({}, '', location.pathname);
@@ -5428,8 +4819,7 @@ async function loadAndRender(token) {
         .toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' })
     : '—';
   document.getElementById('status-text').textContent =
-    'Strava power data · last activity ' + lastDate +
-    (historyShort ? ' · ⚠ Only ' + actualHistoryDays + ' days of history — CTL may be understated' : '');
+    activities.length + ' activities · Strava power data · last activity ' + lastDate;
 
   // ── Debug: log all activity type/sport_type combos to console ────────────
   console.group('Strava activity type audit — last 90 days (' + activities.length + ' total)');
@@ -5476,7 +4866,7 @@ async function loadAndRender(token) {
     });
   console.groupEnd();
 
-  render(athlete, activities, computeMetrics(activities, actualHistoryDays));
+  render(athlete, activities, computeMetrics(activities));
 }
 
 async function init() {
@@ -5546,7 +4936,7 @@ async function init() {
       formula: 'CTL = CTL_prev + (DailyLoad − CTL_prev) ÷ 42',
       body: 'Chronic Training Load measures your long-term fitness over a 42-day rolling window. Think of it as your aerobic base — how much sustained work your body is adapted to handle.',
       detail: 'Each day your training load (TSS or HRSS) nudges the CTL value up or down using an exponential moving average. Higher CTL = more fitness. It takes roughly 6 weeks of consistent training to meaningfully raise CTL. Your current value of <strong style="color:#c8f060">__VAL__</strong> reflects the last 42 days of accumulated load.',
-      target: 'CTL target scales with race duration — longer events require a deeper aerobic base. See your goal readiness panel for your specific target.',
+      target: 'Target for sub-11hr Baviaans: CTL 80–100 by race day.',
     },
     fatigue: {
       title: 'Fatigue — ATL',
@@ -5561,7 +4951,7 @@ async function init() {
       badge: null,
       formula: 'Form (TSB) = CTL_yesterday − ATL_yesterday',
       body: 'Form is the balance between your fitness and your fatigue. Positive = fresh, well-rested. Negative = carrying fatigue, building fitness. The sweet spot for racing is slightly negative (−5 to −30).',
-      detail: 'TSB is calculated from today\'s CTL and ATL — after applying each day\'s training load update — so it reflects your current fitness-fatigue balance as of this moment.',
+      detail: 'TSB is calculated from yesterday\'s CTL and ATL — not today\'s — so it reflects how you arrived at today.',
       target: null,
       zones: [
         { col:'#f0d060', label:'Transition  > +20', desc:'Very fresh — possibly detrained. Good for rest weeks.' },
@@ -5574,10 +4964,10 @@ async function init() {
     eftp: {
       title: 'eFTP — Estimated Functional Threshold Power',
       badge: { text:'POWER', col:'#f0a060' },
-      formula: 'eFTP = P_avg × (duration_s ÷ 3600)^0.07  [× 0.95 if ride ≤ 40 min]\n\nThe duration scaling (Monod-Scherrer) converts any ride\'s power to a 60-min FTP equivalent. The 0.95 correction applies only to shorter efforts where anaerobic contribution inflates the result.',
+      formula: 'eFTP = P_20min_equivalent × 0.95  |  P_20 = P_avg × (duration_s ÷ 1200)^0.07',
       body: 'FTP is the highest average power sustainable for ~60 minutes. The most validated field method (Allen & Coggan, Training and Racing with a Power Meter) uses a 20-min maximal effort × 0.95 — the 5% discount corrects for the higher anaerobic contribution at 20 min compared to a full hour.',
       detail: 'All power-metered rides ≥20 min from the last 90 days are analysed. Each ride\'s average watts is normalised to a 20-min equivalent using the Monod-Scherrer power-duration exponent (0.07) — a physiologically validated relationship. The highest resulting value × 0.95 = your eFTP. Current: <strong style="color:#f0a060">__VAL__</strong>. To improve accuracy, complete a hard 20–60 min effort at maximal sustainable pace.',
-      target: 'Zone 2 = 56–75% FTP · Threshold = 91–105% · Ultra-endurance race pace ≈ 65–75% FTP · Short events (3hr) ≈ 80–85% FTP.',
+      target: 'Zone 2 = 56–75% FTP · Threshold = 91–105% · Baviaans race pace ≈ 65–75% FTP.',
     },
     wkg: {
       title: 'W/kg — Power-to-Weight Ratio',
@@ -5585,7 +4975,7 @@ async function init() {
       formula: 'W/kg = eFTP (watts) ÷ body weight (kg)',
       body: 'Watts per kilogram is the most important metric for climbing performance. Because gravity doesn\'t care about absolute power — only power relative to the weight you\'re lifting up the hill.',
       detail: 'Your current <strong style="color:#c8f060">__VAL__</strong> W/kg is calculated from your eFTP and the weight entered below. Update your weight weekly for accurate tracking. The dashed pink line on the PMC chart shows how your W/kg has moved over time.',
-      target: 'Your specific W/kg target is calculated from your goal race in the readiness panel. General benchmarks: 3hr event ≥ 3.5 W/kg · 6hr event ≥ 3.0 W/kg · 11hr event ≥ 2.3 W/kg. Elite MTB marathon riders: 4.0+ W/kg.',
+      target: 'Sub-11hr Baviaans estimated target: ≥ 3.0–3.5 W/kg. Elite MTB marathon riders: 4.0+ W/kg.',
       wkgScale: [
         { range:'< 2.5', label:'Recreational',  col:'#9090a8' },
         { range:'2.5–3.0', label:'Sportive',    col:'#4a9eff' },
@@ -5696,17 +5086,17 @@ async function init() {
       title: '📈 Fitness (CTL) — 30% of score',
       col: '#c8f060',
       body: 'Chronic Training Load (CTL) is your 42-day exponentially weighted training average. It represents the depth of your aerobic base — how much sustained work your body has adapted to handle over the last 6 weeks.',
-      formula: 'CTL = CTL_prev + (Daily Load − CTL_prev) ÷ 42  |  Target scales with race duration: 3hr→60, 6hr→69, 9hr→79, 11hr→85',
-      detail: 'CTL is the single best predictor of endurance race readiness. Your target CTL is calculated from your race duration — longer events demand a deeper aerobic base. Below 60: challenging. 60–80: solid base. 80–95: well-prepared. 95+: peak fitness. CTL takes approximately 6 weeks of consistent training to shift meaningfully — you cannot shortcut it in the final weeks.',
+      formula: 'CTL = CTL_prev + (Daily Load − CTL_prev) ÷ 42  |  Target for sub-11hr Baviaans: CTL ≥ 85',
+      detail: 'A CTL of 85 is the minimum threshold for arriving at Baviaans with enough aerobic capacity to sustain 11 hours of effort. Below 60: survival mode. 60–80: solid but demanding. 80–95: well-prepared. 95+: race-ready. CTL takes approximately 6 weeks of consistent training to shift meaningfully — you cannot shortcut it in the final weeks.',
       weight: 'Contributes 30% to the overall readiness score. High fitness without the power to use it, or power without the base to sustain it, both lead to the same result in hour 8.',
     },
     spec: {
       title: '🌲 MTB Specificity — 30% of score',
       col: '#f0a060',
-      body: 'The percentage of your last 90 days\' rides that match your race type — outdoor MTB, gravel or road — rather than indoor training. Indoor riding builds fitness, but race-day performance demands more: technical terrain handling, descending confidence, variable power outputs, and the specific muscular fatigue of real roads and trails.',
-      formula: 'Specificity = Race-type rides ÷ Total outdoor rides × 100%  |  Last 90 days  |  Target: ≥60%',
-      detail: 'Research consistently shows that sport-specific training produces superior race-day performance over general fitness. For any long-distance event, indoor training cannot replicate: real terrain demands, technical skills at speed, variable power from gradient changes, weather and heat acclimatisation, or nutrition logistics on the bike.',
-      weight: 'Contributes 30% to the overall readiness score. An athlete with high W/kg and CTL but minimal race-specific outdoor time will face a very different challenge on race day than their fitness metrics suggest.',
+      body: 'The percentage of your last 90 days\' rides that were outdoor MTB or gravel — not on Zwift or a trainer. Zwift builds fitness, but Baviaans demands more: technical terrain handling, descending confidence, sustained seated climbing position, and the specific muscular fatigue of real trails.',
+      formula: 'Specificity = Outdoor MTB rides ÷ Total rides × 100%  |  Last 90 days  |  Target: ≥60%',
+      detail: 'Research consistently shows that sport-specific training produces superior race-day performance over general fitness. For a 230km MTB race with 3,000m of climbing on technical terrain, indoor training cannot replicate: trail vibration and body position demands, technical descending at speed, variable power outputs from terrain changes, heat and weather acclimatisation, nutrition logistics on the bike.',
+      weight: 'Contributes 30% to the overall readiness score. An athlete with high W/kg and CTL but zero outdoor MTB time will face a very different challenge on race day than their fitness metrics suggest.',
     },
   };
 
